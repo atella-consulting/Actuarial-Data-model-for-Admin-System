@@ -1,195 +1,210 @@
 import os
 import pandas as pd
 
+# Import the field list and field categories from config.py.
+# These control which rows appear in the final output file.
+from config import FIELDS, FIELD_DOMAIN
 
+# Import the main business-logic functions from engine.py.
+# These handle rate conversion, date formatting, initialization,
+# roll-forward valuation, Event2 processing, and Event2 detection.
+from engine import (
+    to_pct,
+    fmt_date,
+    fmt_output,
+    process_initialization,
+    roll_forward,
+    process_withdrawal,
+    extract_event2_input,
+)
+
+
+# Ask the user for a file path.
+# If the user presses Enter, use the default path instead.
+# Also clean off any quote marks and convert the result to a full absolute path.
 def prompt_path(prompt, default):
-    path = input(f"{prompt} [Default: {default}]: ").strip()
-    path = path or default
-    return os.path.abspath(path.strip('"').strip("'"))
+    p = input(f"{prompt} [Default: {default}]: ").strip()
+    return os.path.abspath((p or default).strip('"').strip("'"))
 
 
-def to_percent(x):
-    if pd.isna(x):
-        return None
-    if isinstance(x, str):
-        x = x.strip().replace(",", "")
-        if x.endswith("%"):
-            return float(x[:-1]) / 100
-        x = float(x)
-    x = float(x)
-    return x / 100 if x > 1 else x
+# Read the ProductTables sheet and turn it into a nested dictionary.
+# Example result:
+# {
+#   "CreditingRate": {"5-year": "5.75%"},
+#   "ContractCharge": {"Annual": 0}
+# }
+# If the workbook does not contain a ProductTables sheet, return an empty dictionary.
+def load_product_tables(xls):
+    if "ProductTables" not in xls.sheet_names:
+        return {}
+
+    # Try reading the sheet normally first.
+    df = pd.read_excel(xls, sheet_name="ProductTables", engine="openpyxl")
+
+    # If the expected header row is missing, try again by skipping one row.
+    if "TableName" not in df.columns:
+        df = pd.read_excel(xls, sheet_name="ProductTables", skiprows=1, engine="openpyxl")
+
+    tables = {}
+    for _, row in df.iterrows():
+        table_name = str(row.get("TableName", "")).strip()
+        key = str(row.get("Key", "")).strip()
+
+        # Only keep rows that have a valid table name and key.
+        if table_name and key and table_name != "nan":
+            tables.setdefault(table_name, {})[key] = row.get("Value")
+
+    return tables
 
 
-def to_short_date(x):
-    if pd.isna(x):
-        return ""
-    return pd.to_datetime(x, errors="coerce").strftime("%Y-%m-%d")
+# Read the SurrenderCharges sheet and standardize its columns.
+# The output is a DataFrame with:
+# - Year
+# - ChargeRate (converted to decimal format)
+# If the workbook does not contain this sheet, return an empty DataFrame.
+def load_surrender_charges(xls):
+    if "SurrenderCharges" not in xls.sheet_names:
+        return pd.DataFrame(columns=["Year", "ChargeRate"])
+
+    # Try reading the sheet normally first.
+    df = pd.read_excel(xls, sheet_name="SurrenderCharges", engine="openpyxl")
+
+    # If the expected header row is missing, try again by skipping one row.
+    if "Year" not in df.columns:
+        df = pd.read_excel(xls, sheet_name="SurrenderCharges", skiprows=1, engine="openpyxl")
+
+    # Convert Year to numeric and ChargeRate to decimal percentage.
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
+    df["ChargeRate"] = df["ChargeRate"].map(to_pct)
+    return df
 
 
-def policy_year(issue_date, valuation_date):
-    issue_date = pd.to_datetime(issue_date)
-    valuation_date = pd.to_datetime(valuation_date)
+# Decide which sheet contains the policy input row.
+# Prefer a sheet named PolicyData.
+# If that does not exist, use the first sheet that is not a lookup sheet.
+def find_policy_sheet(xls):
+    if "PolicyData" in xls.sheet_names:
+        return "PolicyData"
 
-    year_num = valuation_date.year - issue_date.year + 1
-    anniversary = issue_date.replace(year=valuation_date.year)
-
-    if valuation_date < anniversary:
-        year_num -= 1
-
-    return max(year_num, 1)
-
-
-def month_diff(start_date, end_date):
-    start_date = pd.to_datetime(start_date)
-    end_date = pd.to_datetime(end_date)
-
-    months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-    if end_date.day < start_date.day:
-        months -= 1
-    return max(months, 0)
+    excluded = {"ProductTables", "SurrenderCharges"}
+    candidates = [s for s in xls.sheet_names if s not in excluded]
+    if not candidates:
+        raise ValueError("No policy input sheet found.")
+    return candidates[0]
 
 
-def get_surrender_charge_rate(sc_table, year_num):
-    sc = sc_table.copy()
-    sc.columns = [str(c).strip() for c in sc.columns]
+# Build the final output table and write it to Excel.
+# Each model field becomes one row.
+# Each event block / valuation block becomes one column.
+def write_model(col_specs, output_path):
+    rows = []
 
-    sc["Year"] = pd.to_numeric(sc["Year"], errors="coerce")
-    sc["ChargeRate"] = sc["ChargeRate"].map(to_percent)
+    for field in FIELDS:
+        # Start each row with the field name and its domain/category.
+        row = {
+            "Field": field,
+            "Domain": FIELD_DOMAIN.get(field, ""),
+        }
 
-    match = sc.loc[sc["Year"] == year_num, "ChargeRate"]
-    return float(match.iloc[0]) if not match.empty else 0.0
+        # For each output block, pull the value for this field
+        # and format it for Excel output.
+        for col_name, block in col_specs:
+            value = block.get(field) if block else None
+            row[col_name] = fmt_output(value, field)
 
+        rows.append(row)
 
-def build_output(policy_row, sc_table):
-    row = policy_row.copy()
-
-    # remove unwanted column if present
-    row = row.drop(labels=["Unnamed: 27"], errors="ignore")
-
-    # date fields
-    date_fields = [
-        "Valuation Date", "IssueDate", "MaturityDate", "AnnuitantDOB",
-        "OwnerDOB", "GuaranteePeriodStartDate", "GuaranteePeriodEndDate"
-    ]
-    for c in date_fields:
-        if c in row.index:
-            row[c] = pd.to_datetime(row[c], errors="coerce")
-
-    # percent fields
-    for c in [
-        "GuaranteedMinimumInterestRate",
-        "NonforfeitureRate",
-        "PremiumTaxRate",
-        "CurrentCreditRate",
-        "MVAReferenceRateAtStart",
-    ]:
-        if c in row.index:
-            row[c] = to_percent(row[c])
-
-    # numeric fields
-    for c in [
-        "SinglePremium",
-        "AccumulatedInterestCurrentYear",
-        "PenaltyFreeWithdrawalBalance",
-        "RemainingMonthsInGuaranteePeriod",
-        "AccountValue",
-        "CashSurrenderValue",
-        "Gross WD",
-        "Net",
-        "Tax",
-    ]:
-        if c in row.index:
-            row[c] = pd.to_numeric(row[c], errors="coerce")
-
-    prior_av = float(row.get("AccountValue", 0) or 0)
-    gross_wd = float(row.get("Gross WD", 0) or 0)
-    net = float(row.get("Net", 0) or 0) if pd.notna(row.get("Net", 0)) else ""
-    tax = float(row.get("Tax", 0) or 0) if pd.notna(row.get("Tax", 0)) else ""
-
-    next_val_date = row["Valuation Date"] + pd.Timedelta(days=1)
-    growth = (1 + row["CurrentCreditRate"]) ** (1 / 365)
-
-    av_before = prior_av * growth
-    av_after = av_before - gross_wd
-    daily_interest = av_before - prior_av
-    acc_int = float(row.get("AccumulatedInterestCurrentYear", 0) or 0) + daily_interest
-
-    remaining_months = month_diff(next_val_date, row["GuaranteePeriodEndDate"])
-
-    year_num = policy_year(row["IssueDate"], next_val_date)
-    sc_rate = get_surrender_charge_rate(sc_table, year_num)
-
-    mva_before = 0.0
-    mva_after = 0.0
-
-    surrender_charge_before = av_before * sc_rate
-    surrender_charge_after = av_after * sc_rate
-
-    csv_before = av_before + mva_before - surrender_charge_before
-    csv_after = av_after + mva_after - surrender_charge_after
-
-    fields = [
-        ("Valuation Date", to_short_date(next_val_date), to_short_date(next_val_date)),
-        ("PolicyNumber", row.get("PolicyNumber", ""), row.get("PolicyNumber", "")),
-        ("IssueDate", to_short_date(row.get("IssueDate", "")), to_short_date(row.get("IssueDate", ""))),
-        ("ProductType", row.get("ProductType", ""), row.get("ProductType", "")),
-        ("PlanCode", row.get("PlanCode", ""), row.get("PlanCode", "")),
-        ("IssueAge", row.get("IssueAge", ""), row.get("IssueAge", "")),
-        ("State", row.get("State", ""), row.get("State", "")),
-        ("SinglePremium", row.get("SinglePremium", ""), row.get("SinglePremium", "")),
-        ("SelectedRiders", row.get("SelectedRiders", ""), row.get("SelectedRiders", "")),
-        ("GuaranteedMinimumInterestRate", row.get("GuaranteedMinimumInterestRate", ""), row.get("GuaranteedMinimumInterestRate", "")),
-        ("NonforfeitureRate", row.get("NonforfeitureRate", ""), row.get("NonforfeitureRate", "")),
-        ("MaturityDate", to_short_date(row.get("MaturityDate", "")), to_short_date(row.get("MaturityDate", ""))),
-        ("AnnuitantDOB", to_short_date(row.get("AnnuitantDOB", "")), to_short_date(row.get("AnnuitantDOB", ""))),
-        ("OwnerDOB", to_short_date(row.get("OwnerDOB", "")), to_short_date(row.get("OwnerDOB", ""))),
-        ("PremiumTaxRate", row.get("PremiumTaxRate", ""), row.get("PremiumTaxRate", "")),
-        ("GuaranteePeriodStartDate", to_short_date(row.get("GuaranteePeriodStartDate", "")), to_short_date(row.get("GuaranteePeriodStartDate", ""))),
-        ("GuaranteePeriodEndDate", to_short_date(row.get("GuaranteePeriodEndDate", "")), to_short_date(row.get("GuaranteePeriodEndDate", ""))),
-        ("CurrentCreditRate", row.get("CurrentCreditRate", ""), row.get("CurrentCreditRate", "")),
-        ("MVAReferenceRateAtStart", row.get("MVAReferenceRateAtStart", ""), row.get("MVAReferenceRateAtStart", "")),
-        ("PenaltyFreeWithdrawalBalance", row.get("PenaltyFreeWithdrawalBalance", ""), row.get("PenaltyFreeWithdrawalBalance", "")),
-        ("RemainingMonthsInGuaranteePeriod", remaining_months, remaining_months),
-        ("AccountValue", av_before, av_after),
-        ("SurrenderChargeRate", sc_rate, sc_rate),
-        ("SurrenderCharge", surrender_charge_before, surrender_charge_after),
-        ("MVA", mva_before, mva_after),
-        ("CashSurrenderValue", csv_before, csv_after),
-        ("Rider 1", "", ""),
-        ("Rider 2", "", ""),
-        ("Rider 3", "", ""),
-        ("DailyInterest", daily_interest, daily_interest),
-        ("AccumulatedInterestCurrentYear", acc_int, acc_int),
-        ("TransactionHistory", "", ""),
-        ("Gross WD", "", gross_wd if gross_wd != 0 else ""),
-        ("Net", "", net if net != 0 else ""),
-        ("Tax", "", tax if tax != 0 else ""),
-    ]
-
-    return pd.DataFrame(fields, columns=["Field", "Before Transaction", "After Transaction"])
+    pd.DataFrame(rows).to_excel(output_path, index=False, engine="openpyxl")
 
 
+# Main driver of the script.
+# This reads the input file, builds Event1, optionally builds Event2,
+# and writes the final output workbook.
 def main():
-    print("\nActuarial-Data-model-for-Admin-System")
-
+    # Ask the user for the input and output file locations.
     input_path = prompt_path("Enter input Excel file", "policy_input.xlsx")
-    output_path = prompt_path("Enter output Excel file", "policy_output_next_day.xlsx")
+    output_path = prompt_path("Enter output Excel file", "policy_model_output.xlsx")
 
-    policy_df = pd.read_excel(input_path, engine="openpyxl")
-    sc_table = pd.read_excel(
-        input_path,
-        sheet_name="SurrenderCharges",
-        skiprows=1,
-        engine="openpyxl"
-    )
+    # Open the Excel workbook once so multiple sheets can be read from it.
+    xls = pd.ExcelFile(input_path, engine="openpyxl")
+
+    # Load lookup tables used by the calculations.
+    product_tables = load_product_tables(xls)
+    surrender_charges = load_surrender_charges(xls)
+
+    # Find and read the sheet containing the policy row.
+    policy_sheet = find_policy_sheet(xls)
+    policy_df = pd.read_excel(xls, sheet_name=policy_sheet, engine="openpyxl")
 
     if policy_df.empty:
-        raise ValueError("Input file has no policy data.")
+        raise ValueError(f"{policy_sheet} sheet is empty.")
 
-    result = build_output(policy_df.iloc[0], sc_table)
-    result.to_excel(output_path, index=False, engine="openpyxl")
+    # For now, the model processes only the first policy row.
+    init_row = policy_df.iloc[0]
 
-    print(f"\nDone. Output saved to: {output_path}")
+    # Build Event1:
+    # - raw Event1 data
+    # - Event1 calculations
+    # - Event1 validations
+    # - end-of-day state after Event1
+    data1, calc1, val1, eod1 = process_initialization(
+        init_row,
+        surrender_charges,
+        product_tables,
+    )
+
+    # Use the Event1 valuation date in the dynamic output header.
+    eod1_date = fmt_date(eod1.get("ValuationDate"))
+
+    # Start the output column list with the Event1 block.
+    col_specs = [
+        ("Event1 Data", data1),
+        ("Event1 Calc", calc1),
+        ("Event1 Validation", val1),
+        (f"EOD {eod1_date} / After Event1", eod1),
+    ]
+
+    # Check the same input row to see whether Event2 exists.
+    # For now, Event2 is inferred from Gross WD.
+    event2_input = extract_event2_input(init_row)
+
+    if event2_input is not None:
+        # First build the next valuation state from the Event1 end-of-day state.
+        # This is the pre-Event2 state.
+        valuation_state = roll_forward(
+            eod1,
+            surrender_charges,
+            target_date=event2_input.get("Valuation Date"),
+        )
+
+        # Add the valuation block to the output.
+        valuation_date = fmt_date(valuation_state.get("ValuationDate"))
+        col_specs.append((f"Valuation {valuation_date}", valuation_state))
+
+        # Apply Event2 as a withdrawal.
+        # This produces:
+        # - Event2 data
+        # - Event2 calculations
+        # - Event2 validations
+        # - end-of-day state after Event2
+        data2, calc2, val2, eod2 = process_withdrawal(
+            valuation_state,
+            event2_input,
+            surrender_charges,
+        )
+
+        # Add the Event2 block to the output.
+        eod2_date = fmt_date(eod2.get("ValuationDate"))
+        col_specs.extend([
+            ("Event2 Data", data2),
+            ("Event2 Calc", calc2),
+            ("Event2 Validation", val2),
+            (f"EOD {eod2_date} / After Event2", eod2),
+        ])
+
+    # Write the final structured output to Excel.
+    write_model(col_specs, output_path)
+    print(f"Done. Output saved to: {output_path}")
 
 
 if __name__ == "__main__":
