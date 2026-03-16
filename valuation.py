@@ -1,0 +1,133 @@
+"""
+valuation.py
+------------
+Daily roll-forward (EOD valuation) for the MYGA/FIA actuarial engine.
+
+The single public function :func:`roll_forward` advances a policy's
+end-of-day state by one or more calendar days, applying interest accrual
+and resetting ``AccumulatedInterestCurrentYear`` on policy anniversaries.
+
+It does **not** apply any events (withdrawals, surrenders, etc.).
+Events are handled separately in the ``events/`` package.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+import pandas as pd
+
+from config import STATIC_CARRY
+from calculations import snapshot
+from utils import to_ts, sfloat, safe_replace_year
+
+
+def roll_forward(
+    prior_eod: Dict[str, Any],
+    sc_tbl: Optional[pd.DataFrame],
+    target_date: Any = None,
+) -> Dict[str, Any]:
+    """
+    Advance the policy state from *prior_eod* to *target_date*.
+
+    If *target_date* is ``None`` or unparseable, the function defaults to
+    the calendar day immediately following the prior valuation date.
+
+    Steps
+    -----
+    1. Determine the number of days elapsed (``day_count``).
+    2. Grow ``AccountValue`` using the crediting rate on a 365-day basis.
+    3. Subtract any daily contract charge (currently zero).
+    4. On a policy anniversary, reset ``AccumulatedInterestCurrentYear``
+       to the interest earned in the current period only.
+    5. Carry forward all static fields from *prior_eod*.
+    6. Build the standard derived snapshot (surrender charge, CSV, etc.).
+
+    Parameters
+    ----------
+    prior_eod : dict
+        The full end-of-day state produced by the previous event or
+        the previous ``roll_forward`` call.
+    sc_tbl : pd.DataFrame or None
+        Surrender charge lookup table (``["Year", "ChargeRate"]`` columns).
+    target_date : date-like, optional
+        The valuation date to roll forward to.  Defaults to
+        ``prior_eod["ValuationDate"] + 1 day``.
+
+    Returns
+    -------
+    dict
+        New end-of-day state dictionary with ``Event`` set to
+        ``"Valuation"``.  This dict is suitable as input to another
+        ``roll_forward`` call or to an event processor.
+
+    Notes
+    -----
+    - The function never mutates *prior_eod*.
+    - Contract charge (``_cc``) is read from the internal helper key
+      set by the event processors.  It is currently always 0.0.
+    """
+    prior_date = to_ts(prior_eod["ValuationDate"])
+    new_date = to_ts(target_date) if target_date is not None else pd.NaT
+
+    # Default to the next calendar day if no target date was supplied.
+    if pd.isna(new_date):
+        new_date = prior_date + pd.Timedelta(days=1)
+
+    day_count = max((new_date - prior_date).days, 0)
+
+    issue_dt = to_ts(prior_eod["IssueDate"])
+    gp_end   = to_ts(prior_eod["GuaranteePeriodEndDate"])
+    ccr      = sfloat(prior_eod.get("CurrentCreditRate"))
+    prior_av = sfloat(prior_eod.get("AccountValue"))
+    annual_cc = sfloat(prior_eod.get("_cc"), 0.0)   # internal contract-charge field
+
+    # ------------------------------------------------------------------
+    # 1. Grow account value using compound interest on a 365-day basis.
+    # ------------------------------------------------------------------
+    growth = (1 + ccr) ** (day_count / 365) if day_count > 0 else 1.0
+    av_before_charge = prior_av * growth
+
+    # 2. Subtract the daily portion of the annual contract charge.
+    new_av = av_before_charge - annual_cc * (day_count / 365)
+
+    # ------------------------------------------------------------------
+    # 3. Handle AccumulatedInterestCurrentYear.
+    #    On a policy anniversary the accumulator resets to the interest
+    #    earned *since* that anniversary.  On any other day, add the
+    #    period interest to the running total.
+    # ------------------------------------------------------------------
+    period_interest = new_av - prior_av
+    anniversary = safe_replace_year(issue_dt, new_date.year)
+
+    if not pd.isna(anniversary) and new_date.date() == anniversary.date():
+        acc_int = period_interest
+    else:
+        acc_int = sfloat(prior_eod.get("AccumulatedInterestCurrentYear"), 0.0) + period_interest
+
+    # ------------------------------------------------------------------
+    # 4. Build the new state dict.
+    #    Start by carrying forward all static fields, then overwrite the
+    #    fields that change on every valuation.
+    # ------------------------------------------------------------------
+    valuation_state: Dict[str, Any] = {
+        field: prior_eod.get(field) for field in STATIC_CARRY
+    }
+    valuation_state.update(
+        {
+            "ValuationDate": new_date,
+            "Event": "Valuation",
+            "AccountValue": new_av,
+            "DailyInterest": period_interest,
+            "AccumulatedInterestCurrentYear": acc_int,
+            # Derived snapshot fields
+            **snapshot(new_date, new_av, issue_dt, gp_end, sc_tbl),
+            # Clear transaction fields — they do not carry forward
+            "GrossWD": None,
+            "Net":     None,
+            "Tax":     None,
+            # Internal helper — preserve contract charge for future rolls
+            "_cc": annual_cc,
+        }
+    )
+    return valuation_state
