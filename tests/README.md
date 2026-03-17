@@ -1,4 +1,4 @@
-# Windows setup and pytest commands
+# Pytest commands
 
 ## PowerShell
 
