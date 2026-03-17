@@ -37,6 +37,7 @@ def validate_initialization(
     issue_dt: Optional[pd.Timestamp],
     issue_age: Optional[float],
     premium: float,
+    AccumulatedInterestCurrentYear: Optional[float] = None,
 ) -> ValidationResult:
     """
     Validate the core fields read during policy initialization (Event 1).
@@ -46,15 +47,7 @@ def validate_initialization(
     - IssueDate must be present and fall in [2020-01-01, today]  → E
     - IssueAge must be in [0, 95] when provided                  → W
     - SinglePremium must be in [10,000, 1,000,000]               → W
-
-    Parameters
-    ----------
-    issue_dt :
-        Parsed issue date (``pd.NaT`` if missing).
-    issue_age :
-        Issue age as a number, or ``None`` if not provided.
-    premium :
-        Single premium amount.
+    - AccumulatedInterestCurrentYear must be in [10,000, 1,000,000]  → W
 
     Returns
     -------
@@ -75,6 +68,8 @@ def validate_initialization(
     # --- IssueAge ---
     if issue_age is not None and not (0 <= issue_age <= 95):
         result.add_warning("IssueAge", "IssueAge outside expected range [0 ; 95]")
+    elif issue_age is None:
+        result.add_warning("IssueAge", "IssueAge not provided")
 
     # --- SinglePremium ---
     if premium < 10_000 or premium > 1_000_000:
@@ -82,6 +77,14 @@ def validate_initialization(
             "SinglePremium",
             "SinglePremium outside recommended range [10,000 ; 1,000,000]",
         )
+
+    # --- AccumulatedInterestCurrentYear ---
+    if AccumulatedInterestCurrentYear is not None:
+        if AccumulatedInterestCurrentYear < 10_000 or AccumulatedInterestCurrentYear > 1_000_000:
+            result.add_warning(
+                "AccumulatedInterestCurrentYear",
+                "AccumulatedInterestCurrentYear outside recommended range [10,000 ; 1,000,000]",
+            )
 
     return result
 
