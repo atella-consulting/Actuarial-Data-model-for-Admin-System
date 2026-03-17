@@ -175,8 +175,7 @@ def process_initialization(
     # ------------------------------------------------------------------
     issue_age_raw = pick_first(row, "IssueAge")
     issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
-
-    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium)
+    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium, acc_int)
     if result.has_errors():
         raise ValueError(
             f"[PolicyIssue] fatal validation errors:\n{result.error_summary()}"
