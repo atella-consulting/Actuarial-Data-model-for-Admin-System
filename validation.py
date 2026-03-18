@@ -47,7 +47,7 @@ def validate_initialization(
     - IssueDate must be present and fall in [2020-01-01, today]  → E
     - IssueAge must be in [0, 95] when provided                  → W
     - SinglePremium must be in [10,000, 1,000,000]               → W
-    - AccumulatedInterestCurrentYear must be in [10,000, 1,000,000]  → W
+    - AccumulatedInterestCurrentYear must be in [10,000, 1,000,000] if provided → W
 
     Returns
     -------
