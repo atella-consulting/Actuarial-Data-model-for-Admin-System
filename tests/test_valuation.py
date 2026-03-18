@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from valuation import roll_forward
-from tests.sample_data import make_sc_table, CREDIT_RATE, SINGLE_PREMIUM, ISSUE_DATE
+from tests.sample_data import sc_table, CREDIT_RATE, SINGLE_PREMIUM, ISSUE_DATE
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ from tests.sample_data import make_sc_table, CREDIT_RATE, SINGLE_PREMIUM, ISSUE_
 
 @pytest.fixture
 def sc():
-    return make_sc_table()
+    return sc_table()
 
 
 def eod(val_date=ISSUE_DATE, av=SINGLE_PREMIUM, cr=CREDIT_RATE) -> dict:

@@ -42,7 +42,7 @@ TAX_WD            = 250.0
 # Factory helpers
 # ---------------------------------------------------------------------------
 
-def make_policy_row(
+def policy_row(
     *,
     include_withdrawal: bool = False,
     gross_wd: float = GROSS_WD,
@@ -76,13 +76,13 @@ def make_policy_row(
     return pd.Series(data)
 
 
-def make_sc_table() -> pd.DataFrame:
+def sc_table() -> pd.DataFrame:
     """creates a fake surrender charge table based on the SC_RATES dict."""
     return pd.DataFrame(
         [{"Year": yr, "ChargeRate": rate} for yr, rate in SC_RATES.items()]
     )
 
 
-def make_product_tables(credit_rate: str = "5.75%") -> dict:
+def product_tables(credit_rate: str = "5.75%") -> dict:
     """creates fake product setup data with the specified crediting rate."""
     return {"CreditingRate": {"5-year": credit_rate}}

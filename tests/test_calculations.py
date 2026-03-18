@@ -19,7 +19,7 @@ from calculations import (
     snapshot,
     maturity_date_from_issue_and_annuitant,
 )
-from tests.sample_data import make_sc_table
+from tests.sample_data import sc_table
 
 
 # ---------------------------------------------------------------------------
@@ -75,20 +75,18 @@ def test_month_diff_5_years_is_60_months():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def sc_table():
-    return make_sc_table()
 
-def test_sc_rate_year1(sc_table):
-    assert sc_rate(sc_table, 1) == pytest.approx(0.08)
+def test_sc_rate_year1():
+    assert sc_rate(sc_table(), 1) == pytest.approx(0.08)
 
-def test_sc_rate_year3(sc_table):
-    assert sc_rate(sc_table, 3) == pytest.approx(0.06)
+def test_sc_rate_year3():
+    assert sc_rate(sc_table(), 3) == pytest.approx(0.06)
 
-def test_sc_rate_year5(sc_table):
-    assert sc_rate(sc_table, 5) == pytest.approx(0.04)
+def test_sc_rate_year5():
+    assert sc_rate(sc_table(), 5) == pytest.approx(0.04)
 
-def test_sc_rate_beyond_table_returns_zero(sc_table):
-    assert sc_rate(sc_table, 99) == 0.0
+def test_sc_rate_beyond_table_returns_zero():
+    assert sc_rate(sc_table(), 99) == 0.0
 
 def test_sc_rate_none_table_returns_zero():
     assert sc_rate(None, 1) == 0.0
@@ -106,9 +104,9 @@ ISSUE_DT = "2026-01-15"
 GP_END   = "2031-01-15"
 
 @pytest.fixture
-def snap_year1(sc_table):
+def snap_year1():
     """Snapshot taken on the issue date — policy year 1."""
-    return snapshot("2026-01-15", 100_000, ISSUE_DT, GP_END, sc_table)
+    return snapshot("2026-01-15", 100_000, ISSUE_DT, GP_END, sc_table())
 
 def test_snapshot_keys_present(snap_year1):
     expected = {
@@ -133,8 +131,8 @@ def test_snapshot_csv_equals_av_minus_sc(snap_year1):
 def test_snapshot_remaining_months_at_issue(snap_year1):
     assert snap_year1["RemainingMonthsInGuaranteePeriod"] == 60
 
-def test_snapshot_remaining_months_decreases(sc_table):
-    result = snapshot("2027-01-15", 100_000, ISSUE_DT, GP_END, sc_table)
+def test_snapshot_remaining_months_decreases():
+    result = snapshot("2027-01-15", 100_000, ISSUE_DT, GP_END, sc_table())
     assert result["RemainingMonthsInGuaranteePeriod"] == 48
 
 def test_snapshot_no_sc_table_zero_charge():

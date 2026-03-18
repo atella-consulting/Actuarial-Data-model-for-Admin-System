@@ -96,9 +96,22 @@ def process_initialization(
     # ------------------------------------------------------------------
     # 2. Resolve the guarantee term (3 / 5 / 7 / 10 years)
     # ------------------------------------------------------------------
-    plan_key = product_type if product_type in PLAN_YEARS else plan_code
+    import re
+
+    # ProductType arrives as a plain number ("3", "5", "7", "10") — try it first.
+    # PlanCode arrives as "MYGA_5" or "FIA_10" — extract the trailing number.
+    def _extract_trailing_number(code: str) -> str:
+        """Pull the last run of digits from a code string, e.g. 'MYGA_10' → '10'."""
+        match = re.search(r"(\d+)$", str(code or ""))
+        return match.group(1) if match else ""
+
+    if product_type in PLAN_YEARS:
+        plan_key = product_type
+    else:
+        plan_key = _extract_trailing_number(plan_code)
+
     if plan_key not in PLAN_YEARS:
-        plan_key = "5"          # safe default
+        plan_key = "5"          # nothing matched — fall back to 5-year default
     plan_years = PLAN_YEARS[plan_key]
 
     # ------------------------------------------------------------------
