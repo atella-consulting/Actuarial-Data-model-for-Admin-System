@@ -13,11 +13,17 @@ py -m pytest
 Run all tests:
 
 ```bat
-py -m pytest
+python -m pytest
 ```
 
 Run one test file:
 
 ```bat
-py -m pytest tests\test_utils.py
+python -m pytest tests\test_utils.py
+```
+
+See the covereage of tests:
+
+```bat
+python -m pytest --cov=.
 ```
