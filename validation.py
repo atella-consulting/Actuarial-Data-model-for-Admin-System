@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from config import TODAY
+from config import TODAY, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE
 from models import ValidationResult
 from utils import sfloat, nonempty, to_ts
 
@@ -98,6 +98,8 @@ def validate_withdrawal(
     pre_av: float,
     pfwb: float,
     event_date_provided: bool,
+    rate_at_start: Optional[float] = None,
+    rate_current: Optional[float] = None,
 ) -> ValidationResult:
     """
     Validate the fields read during partial-withdrawal processing (Event 2).
@@ -108,22 +110,10 @@ def validate_withdrawal(
     - GrossWD > AccountValue → withdrawal exceeds account value   → E
     - GrossWD > PFWB         → withdrawal exceeds penalty-free
                                withdrawal balance                  → W
-
-    Parameters
-    ----------
-    gross_wd :
-        Gross withdrawal amount requested.
-    pre_av :
-        Account value immediately before the withdrawal.
-    pfwb :
-        Penalty-free withdrawal balance before the withdrawal.
-    event_date_provided :
-        ``True`` if a valuation date was explicitly supplied for Event 2.
-
-    Returns
-    -------
-    ValidationResult
-        Contains all messages found.
+    - rate_at_start missing  → cannot compute MVA                 → E
+    - rate_at_start not in [MVA_MIN_REF_RATE, MVA_MAX_REF_RATE]     → W
+    - rate_current not in [MVA_MIN_REF_RATE, MVA_MAX_REF_RATE]      → W
+    - |rate_current - rate_at_start| > 0.10 → large rate change (>10 pp)         → W
     """
     result = ValidationResult()
 
@@ -147,5 +137,49 @@ def validate_withdrawal(
             f"GrossWD ({gross_wd:,.2f}) exceeds "
             f"PenaltyFreeWithdrawalBalance ({pfwb:,.2f})",
         )
+
+    # --- MVA reference rate validation (only when excess withdrawal exists) ---
+    excess_exists = gross_wd > pfwb
+
+    if excess_exists:
+        # Missing rate at start → MVA cannot be computed
+        if rate_at_start is None:
+            result.add_error(
+                "MVAReferenceRateAtStart",
+                "MVA reference rate at guarantee period start is missing; "
+                "cannot compute MVA on excess withdrawal",
+            )
+        else:
+            if not (MVA_MIN_REF_RATE <= rate_at_start <= MVA_MAX_REF_RATE):
+                result.add_warning(
+                    "MVAReferenceRateAtStart",
+                    f"MVAReferenceRateAtStart ({rate_at_start:.4%}) is outside "
+                    f"expected range [{MVA_MIN_REF_RATE:.0%}, {MVA_MAX_REF_RATE:.0%}]",
+                )
+
+        # Missing current rate
+        if rate_current is None:
+            result.add_error(
+                "MVAReferenceRateCurrent",
+                "MVA reference rate for the day preceding the valuation date is "
+                "missing; cannot compute MVA on excess withdrawal",
+            )
+        else:
+            if not (MVA_MIN_REF_RATE <= rate_current <= MVA_MAX_REF_RATE):
+                result.add_warning(
+                    "MVAReferenceRateCurrent",
+                    f"MVA current reference rate ({rate_current:.4%}) is outside "
+                    f"expected range [{MVA_MIN_REF_RATE:.0%}, {MVA_MAX_REF_RATE:.0%}]",
+                )
+
+        # Large rate change warning (>10 percentage points)
+        if rate_at_start is not None and rate_current is not None:
+            rate_change = abs(rate_current - rate_at_start)
+            if rate_change > 0.10:
+                result.add_warning(
+                    "MVARateChange",
+                    f"MVA rate change ({rate_change:.4%}) exceeds 10 percentage "
+                    "points; verify reference rates are correct",
+                )
 
     return result

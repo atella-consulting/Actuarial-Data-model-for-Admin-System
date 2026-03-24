@@ -2,19 +2,6 @@
 events/event_2.py
 -----------------
 Event 2 — PartialWithdrawal.
-
-Public API
-----------
-  extract_event2_input(row)                        -> Optional[dict]
-  process_withdrawal(val_state, event_input, sc_tbl) -> EventOutput
-
-``extract_event2_input`` examines the raw policy row to see whether a
-withdrawal event was included.  If it finds a non-zero Gross WD, it
-returns a small input dict that ``process_withdrawal`` can consume.
-
-``process_withdrawal`` applies the withdrawal to the pre-event valuation
-state, validates the amounts, and returns a fully structured
-:class:`~models.EventOutput`.
 """
 
 from __future__ import annotations
@@ -31,7 +18,12 @@ from utils import (
     pick_first,
     merge_state,
 )
-from calculations import snapshot
+from calculations import (
+    snapshot,
+    get_mva_rate,
+    is_mva_waiver_window,
+    compute_mva,
+)
 from validation import validate_withdrawal
 
 
@@ -43,27 +35,8 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
     """
     Inspect the policy input row and return an event-input dict for
     Event 2 if a non-zero Gross WD is present.
-
-    Column-name resolution
-    ----------------------
-    The function tries several common variants for ``Gross WD`` and for
-    the second valuation-date column (pandas may rename duplicate headers
-    to ``"Valuation Date.1"``).
-
-    Parameters
-    ----------
-    row :
-        A single ``pd.Series`` from the ``PolicyData`` sheet.
-
-    Returns
-    -------
-    dict or None
-        ``None`` when no withdrawal is found.
-        Otherwise a dict with keys:
-        ``"EventType"``, ``"Valuation Date"``, ``"Gross WD"``,
-        ``"Net"``, ``"Tax"``.
     """
-    gross_wd = pick_first(row, "Gross WD", "GrossWD")
+    gross_wd = pick_first(row, "Gross WD")
 
     # No withdrawal at all
     if not nonempty(gross_wd):
@@ -71,25 +44,7 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
     if sfloat(gross_wd, 0.0) == 0.0:
         return None
 
-    # Try several possible column names for the Event 2 valuation date.
-    event_date = pick_first(
-        row,
-        "Valuation Date.1",
-        "ValuationDate.1",
-        "Event2 Valuation Date",
-        "Event2ValuationDate",
-    )
-
-    # Fallback: scan for any pandas-renamed duplicate column
-    if event_date is None:
-        for col in row.index:
-            col_str = str(col)
-            if (
-                col_str.startswith("Valuation Date.")
-                or col_str.startswith("ValuationDate.")
-            ) and nonempty(row[col]):
-                event_date = row[col]
-                break
+    event_date = pick_first(row, "Valuation Date.1")
 
     return {
         "EventType":    "PartialWithdrawal",
@@ -108,6 +63,7 @@ def process_withdrawal(
     val_state: Dict[str, Any],
     event_input: Dict[str, Any],
     sc_tbl: Optional[pd.DataFrame],
+    rates_df: Optional[pd.DataFrame] = None,
 ) -> EventOutput:
     """
     Process Event 2 — PartialWithdrawal.
@@ -116,29 +72,11 @@ def process_withdrawal(
     current account value and penalty-free withdrawal balance, applies
     the withdrawal, and returns a fully structured :class:`EventOutput`.
 
-    Parameters
-    ----------
-    val_state : dict
-        The pre-event valuation state produced by ``roll_forward()``.
-        Must contain at minimum: ``ValuationDate``, ``AccountValue``,
-        ``PenaltyFreeWithdrawalBalance``, ``IssueDate``,
-        ``GuaranteePeriodEndDate``.
-    event_input : dict
-        The dict returned by :func:`extract_event2_input` (or any dict
-        with the same keys).
-    sc_tbl : pd.DataFrame or None
-        Surrender charge lookup table.
-
-    Returns
-    -------
-    EventOutput
-        ``event_type`` is ``"PartialWithdrawal"``.
-        ``eod`` is the full end-of-day state after the withdrawal.
-
     Raises
     ------
     ValueError
-        If the gross withdrawal exceeds the account value (fatal error).
+        If the gross withdrawal exceeds the account value (fatal error),
+        or if reference rates are missing for an excess withdrawal.
     """
     # ------------------------------------------------------------------
     # 1. Parse event inputs
@@ -162,22 +100,79 @@ def process_withdrawal(
     pfwb   = sfloat(val_state.get("PenaltyFreeWithdrawalBalance"), 0.0)
 
     # ------------------------------------------------------------------
-    # 3. Validation
+    # 3. MVA rate look-ups
+    #
+    # A = rate at start of current guarantee period (stored on the policy
+    #     at issue time via event_1 and carried forward in STATIC_CARRY)
+    # B = rate on the day *preceding* the valuation date
     # ------------------------------------------------------------------
-    result = validate_withdrawal(gross_wd, pre_av, pfwb, event_date_provided)
+    rate_at_start: Optional[float] = sfloat(
+        val_state.get("MVAReferenceRateAtStart"), None
+    ) or None 
+
+    mva_column: Optional[str] = val_state.get("_mva_column")
+
+    # Look up B
+    day_before_event = event_date - pd.Timedelta(days=1) if not pd.isna(event_date) else None
+    rate_current: Optional[float] = get_mva_rate(rates_df, day_before_event, column=mva_column)
+
+    # ------------------------------------------------------------------
+    # 4. Validation (now includes MVA rate checks for excess withdrawals)
+    # ------------------------------------------------------------------
+    result = validate_withdrawal(
+        gross_wd,
+        pre_av,
+        pfwb,
+        event_date_provided,
+        rate_at_start,
+        rate_current,
+    )
     if result.has_errors():
         raise ValueError(
             f"[PartialWithdrawal] fatal validation errors:\n{result.error_summary()}"
         )
 
     # ------------------------------------------------------------------
-    # 4. Apply withdrawal
+    # 5. Compute MVA
+    #
+    # MVA applies only to the portion of the withdrawal that exceeds the
+    # penalty-free withdrawal balance (the "excess amount").
+    # The MVA is waived entirely during the 30-day window at the start of
+    # the guarantee period.
+    # ------------------------------------------------------------------
+    excess_amount = max(0.0, gross_wd - pfwb)
+
+    gp_start = to_ts(val_state.get("GuaranteePeriodStartDate"))
+    gp_end   = to_ts(val_state.get("GuaranteePeriodEndDate"))
+    issue_dt = to_ts(val_state.get("IssueDate"))
+
+    # Whole months remaining in the guarantee period (used as 't').
+    from calculations import month_diff
+    remaining_months = month_diff(event_date, gp_end)
+
+    # Check waiver window first.
+    in_waiver_window = is_mva_waiver_window(event_date, gp_start)
+
+    if (
+        in_waiver_window
+        or excess_amount <= 0.0
+        or rate_at_start is None
+        or rate_current is None
+    ):
+        mva = 0.0
+        mva_waived = in_waiver_window
+    else:
+        mva = compute_mva(excess_amount, rate_at_start, rate_current, remaining_months)
+        mva_waived = False
+
+    # ------------------------------------------------------------------
+    # 6. Apply withdrawal
     # ------------------------------------------------------------------
     post_av   = pre_av - gross_wd
     post_pfwb = max(0.0, pfwb - gross_wd)
 
     # ------------------------------------------------------------------
-    # 5. Assemble data / calc dicts
+    # 7. Assemble data / calc dicts
     # ------------------------------------------------------------------
     data: Dict[str, Any] = {
         "ValuationDate": event_date,
@@ -187,20 +182,34 @@ def process_withdrawal(
         "Tax":           tax,
     }
 
+    # Build the standard snapshot (SC, CSV, remaining months).
+    snap = snapshot(
+        event_date,
+        post_av,
+        issue_dt,
+        gp_end,
+        sc_tbl,
+    )
+    snap["MVA"] = mva  # override the placeholder 0.0 with the actual MVA
+    # Recalculate CashSurrenderValue to include the MVA adjustment.
+    snap["CashSurrenderValue"] = (
+        post_av + mva - snap["SurrenderCharge"]
+    )
+
     calc: Dict[str, Any] = {
         "AccountValue":              post_av,
         "PenaltyFreeWithdrawalBalance": post_pfwb,
-        **snapshot(
-            event_date,
-            post_av,
-            val_state.get("IssueDate"),
-            val_state.get("GuaranteePeriodEndDate"),
-            sc_tbl,
-        ),
+        # Debug / audit fields recorded in calc block
+        "_mva_excess_amount":        excess_amount,
+        "_mva_rate_at_start":        rate_at_start,
+        "_mva_rate_current":         rate_current,
+        "_mva_remaining_months":     remaining_months,
+        "_mva_waived":               mva_waived,
+        **snap,
     }
 
     # ------------------------------------------------------------------
-    # 6. Build end-of-day state
+    # 8. Build end-of-day state
     # ------------------------------------------------------------------
     eod = merge_state(data, calc, base=val_state)
 

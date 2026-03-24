@@ -3,18 +3,11 @@ events/event_1.py
 -----------------
 Event 1 — PolicyIssue (contract initialization).
 
-Public API
-----------
-  process_initialization(row, sc_tbl, product_tables) -> EventOutput
-
 This module is responsible for:
   1. Reading all raw policy-input values from the Excel row.
   2. Deriving calculated fields (guarantee dates, maturity date, rates).
   3. Validating the inputs via ``validation.validate_initialization``.
   4. Building and returning the full EOD state as an :class:`EventOutput`.
-
-No other module should duplicate this logic.  The orchestrator
-(Actuarial_Data_Model.py) calls this function once per policy.
 """
 
 from __future__ import annotations
@@ -26,7 +19,6 @@ import pandas as pd
 from config import (
     GMIR,
     NONFORFEITURE,
-    MVA_REF_RATE,
     PREMIUM_TAX_RATE,
     PLAN_YEARS,
 )
@@ -41,7 +33,7 @@ from utils import (
     merge_state,
     add_years,
 )
-from calculations import snapshot, maturity_date_from_issue_and_annuitant
+from calculations import snapshot, maturity_date_from_issue_and_annuitant, resolve_mva_column, get_mva_rate
 from validation import validate_initialization
 
 
@@ -49,6 +41,7 @@ def process_initialization(
     row: "pd.Series",
     sc_tbl: Optional[pd.DataFrame],
     product_tables: Dict[str, Any],
+    rates_df: Optional[pd.DataFrame] = None,
 ) -> EventOutput:
     """
     Process Event 1 — PolicyIssue.
@@ -56,31 +49,6 @@ def process_initialization(
     Reads the first policy row from the input Excel file, derives all
     calculated fields, validates the data, and builds the initial
     end-of-day state.
-
-    Parameters
-    ----------
-    row :
-        A single ``pd.Series`` from the ``PolicyData`` sheet.
-    sc_tbl :
-        Surrender charge lookup table (``["Year", "ChargeRate"]``).
-    product_tables :
-        Nested dict loaded from the ``ProductTables`` sheet, e.g.::
-
-            {
-              "CreditingRate":  {"5-year": "5.75%"},
-              "ContractCharge": {"Annual": 0},
-            }
-
-    Returns
-    -------
-    EventOutput
-        ``event_type`` is ``"PolicyIssue"``.
-        ``eod`` is the full end-of-day state, ready for ``roll_forward``.
-
-    Raises
-    ------
-    ValueError
-        If any fatal validation error (``E:`` prefix) is found.
     """
     # ------------------------------------------------------------------
     # 1. Parse raw inputs
@@ -113,6 +81,8 @@ def process_initialization(
     if plan_key not in PLAN_YEARS:
         plan_key = "5"          # nothing matched — fall back to 5-year default
     plan_years = PLAN_YEARS[plan_key]
+
+    mva_column: str = resolve_mva_column(plan_years)
 
     # ------------------------------------------------------------------
     # 3. Selected riders — prefer the combined field, otherwise join columns
@@ -171,7 +141,16 @@ def process_initialization(
 
     mva_ref = to_pct(pick_first(row, "MVAReferenceRateAtStart"))
     if mva_ref is None:
-        mva_ref = MVA_REF_RATE
+        # This is "A" in the MVA formula — the reference rate at the beginning
+        # of the current guarantee period.
+        if rates_df is not None and not rates_df.empty:
+            mva_ref = get_mva_rate(rates_df, gp_start, column=mva_column)
+        # Raise an error if the start-date MVA reference rate cannot be found.
+        if mva_ref is None:
+            raise ValueError(
+                f"Missing MVA reference rate at guarantee start date {gp_start} "
+                f"for column {mva_column}."
+            )
 
     # ------------------------------------------------------------------
     # 7. Balance fields
@@ -238,7 +217,8 @@ def process_initialization(
             "GrossWD": None,
             "Net":     None,
             "Tax":     None,
-            "_cc":     annual_contract_charge,  # internal field for roll_forward
+            "_cc":          annual_contract_charge,  # internal field for roll_forward
+            "_mva_column":  mva_column,              # resolved tenor column for MVA lookups
         },
     )
 

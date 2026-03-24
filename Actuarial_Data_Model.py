@@ -5,12 +5,6 @@ Main orchestrator for the MYGA/FIA actuarial engine.
 
 Responsibility
 --------------
-This script is the *only* entry point that touches the file system
-(input Excel workbook and output Excel workbook).  All business logic
-lives in the modules it imports.
-
-Flow
-----
   1. Prompt the user for input / output paths.
   2. Load lookup tables (ProductTables, SurrenderCharges) from the workbook.
   3. Read the PolicyData sheet and select the first row.
@@ -20,14 +14,6 @@ Flow
        a. Roll the EOD state forward to the Event 2 valuation date.
        b. Call event_2.process_withdrawal → EventOutput (Event 2).
   7. Build the column-spec list and write the output workbook.
-
-Extending the engine
---------------------
-  - To add Event 3 (full surrender), create ``events/event_3.py`` with
-    a ``process_full_surrender`` function that follows the same pattern,
-    then add its call here.
-  - To process multiple policy rows, wrap the event-processing block in
-    a loop over ``policy_df.iterrows()``.
 """
 
 from __future__ import annotations
@@ -37,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from config import FIELDS, FIELD_DOMAIN
+from config import FIELDS, FIELD_DOMAIN, MVA_DATE_COLUMN, MVA_RATE_COLUMNS
 from models import EventOutput
 from utils import to_pct, fmt_date, fmt_output
 from valuation import roll_forward
@@ -113,6 +99,35 @@ def load_surrender_charges(xls: pd.ExcelFile) -> pd.DataFrame:
     df["ChargeRate"] = df["ChargeRate"].map(to_pct)
     return df
 
+def load_mva_rates(xls: pd.ExcelFile) -> pd.DataFrame:
+    """
+    Read the ``MVA_Table`` sheet and return a DataFrame indexed by MDATE.
+    """
+    if "MVA_Table" not in xls.sheet_names:
+        return pd.DataFrame()
+
+    df = pd.read_excel(xls, sheet_name="MVA_Table", engine="openpyxl")
+
+    required_date_col = MVA_DATE_COLUMN
+    rate_cols = MVA_RATE_COLUMNS
+
+    if required_date_col not in df.columns:
+        raise ValueError("MVA_Table is missing required column 'MDATE'.")
+
+    available_rate_cols = [col for col in rate_cols if col in df.columns]
+    if not available_rate_cols:
+        raise ValueError("MVA_Table does not contain any supported MVA rate columns.")
+
+    df = df[[required_date_col] + available_rate_cols].copy()
+
+    df[required_date_col] = pd.to_datetime(df[required_date_col], errors="coerce")
+    df = df[df[required_date_col].notna()].copy()
+    df = df.set_index(required_date_col).sort_index()
+
+    for col in available_rate_cols:
+        df[col] = df[col].map(to_pct)
+
+    return df
 
 def find_policy_sheet(xls: pd.ExcelFile) -> str:
     """
@@ -128,7 +143,7 @@ def find_policy_sheet(xls: pd.ExcelFile) -> str:
     """
     if "PolicyData" in xls.sheet_names:
         return "PolicyData"
-    excluded = {"ProductTables", "SurrenderCharges"}
+    excluded = {"ProductTables", "SurrenderCharges", "MVA_Table"}
     candidates = [s for s in xls.sheet_names if s not in excluded]
     if not candidates:
         raise ValueError("No policy input sheet found in the workbook.")
@@ -191,6 +206,7 @@ def main() -> None:
     xls = pd.ExcelFile(input_path, engine="openpyxl")
     product_tables    = load_product_tables(xls)
     surrender_charges = load_surrender_charges(xls)
+    rates_df          = load_mva_rates(xls)
 
     # 3. Read the PolicyData sheet
     policy_sheet = find_policy_sheet(xls)
@@ -205,7 +221,7 @@ def main() -> None:
     # 4. Event 1 — PolicyIssue
     # ------------------------------------------------------------------
     event1_output: EventOutput = process_initialization(
-        init_row, surrender_charges, product_tables
+        init_row, surrender_charges, product_tables, rates_df=rates_df
     )
 
     eod1_date = fmt_date(event1_output.eod.get("ValuationDate"))
@@ -232,7 +248,7 @@ def main() -> None:
 
         # 5b. Apply the withdrawal
         event2_output: EventOutput = process_withdrawal(
-            valuation_state, event2_input, surrender_charges
+            valuation_state, event2_input, surrender_charges, rates_df=rates_df
         )
         eod2_date = fmt_date(event2_output.eod.get("ValuationDate"))
         col_specs.extend(event2_output.as_col_specs(eod2_date))

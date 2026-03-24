@@ -80,7 +80,8 @@ def roll_forward(
     gp_end   = to_ts(prior_eod["GuaranteePeriodEndDate"])
     ccr      = sfloat(prior_eod.get("CurrentCreditRate"))
     prior_av = sfloat(prior_eod.get("AccountValue"))
-    annual_cc = sfloat(prior_eod.get("_cc"), 0.0)   # internal contract-charge field
+    annual_cc    = sfloat(prior_eod.get("_cc"), 0.0)   # internal contract-charge field
+    mva_column   = prior_eod.get("_mva_column")         # resolved rate-file tenor column
 
     # ------------------------------------------------------------------
     # 1. Grow account value using compound interest on a 365-day basis.
@@ -126,8 +127,9 @@ def roll_forward(
             "GrossWD": None,
             "Net":     None,
             "Tax":     None,
-            # Internal helper — preserve contract charge for future rolls
-            "_cc": annual_cc,
+            # Internal helpers — preserve for future rolls
+            "_cc":         annual_cc,
+            "_mva_column": mva_column,
         }
     )
     return valuation_state

@@ -24,6 +24,106 @@ import pandas as pd
 
 from utils import to_ts, sfloat, safe_replace_year
 
+from config import MVA_DATE_COLUMN, MVA_RATE_COLUMNS, MVA_PLAN_TO_COLUMN, MVA_WAIVER_DAYS, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE
+
+
+# ---------------------------------------------------------------------------
+# MVA market-rate helpers
+# ---------------------------------------------------------------------------
+def resolve_mva_column(plan_years: int) -> str:
+    """
+    Return the rate-file column name that corresponds to *plan_years*.
+
+    Uses the ``MVA_PLAN_TO_COLUMN`` bracket table defined in ``config.py``.
+    """
+    for upper_bound, col in MVA_PLAN_TO_COLUMN:
+        if plan_years <= upper_bound:
+            return col
+    # Map plan_years to the first MVA bucket whose upper bound is >= plan_years
+    return MVA_PLAN_TO_COLUMN[-1][1]
+
+
+def get_mva_rate(
+    rates_df: pd.DataFrame,
+    date: Any,
+    column: Optional[str] = None,
+) -> Optional[float]:
+    """
+    Return the MVA reference rate (decimal) for *date* from *rates_df*.
+    """
+    if rates_df is None or rates_df.empty:
+        return None
+    
+    #  Return None if the requested column is unavailable.
+    if column is None or column not in rates_df.columns:
+        return None
+    col = column
+
+    ts = to_ts(date)
+    if pd.isna(ts):
+        return None
+
+    # Try the requested date first, then roll back up to 2 days to handle weekend gaps.
+    for offset in range(0, 3):
+        candidate = ts - pd.Timedelta(days=offset)
+        if candidate in rates_df.index:
+            val = rates_df.at[candidate, col]
+            if pd.notna(val):
+                return float(val)
+
+    return None
+
+
+def is_mva_waiver_window(
+    val_date: Any,
+    gp_start: Any,
+    waiver_days: int = MVA_WAIVER_DAYS,
+) -> bool:
+    """
+    Return ``True`` if *val_date* falls within the MVA waiver window.
+    The waiver window is [gp_start, gp_start + waiver_days).
+    """
+    val_ts  = to_ts(val_date)
+    gp_ts   = to_ts(gp_start)
+    if pd.isna(val_ts) or pd.isna(gp_ts):
+        return False
+    window_end = gp_ts + pd.Timedelta(days=waiver_days)
+    return gp_ts <= val_ts < window_end
+
+
+def compute_mva(
+    excess_amount: float,
+    rate_at_start: float,
+    rate_current: float,
+    remaining_months: int,
+) -> float:
+    """
+    Compute the Market Value Adjustment dollar amount.
+
+    Formula:
+        mva_factor = ((1 + A) / (1 + B)) ** t  -  1
+        MVA        = excess_amount * mva_factor
+
+    Where:
+      - A = ``rate_at_start``   — reference rate at the beginning of the
+            current guarantee period (decimal, e.g. 0.05 for 5 %)
+      - B = ``rate_current``    — reference rate on the day preceding the
+            valuation date (decimal)
+      - t = ``remaining_months`` / 12  — whole months remaining in the guarantee period, expressed in years (e.g. 18 months → 1.5)
+    """
+    if remaining_months <= 0 or excess_amount <= 0:
+        return 0.0
+
+    t = remaining_months / 12.0
+    denominator = 1.0 + rate_current
+
+    # Guard against division by zero
+    if denominator == 0:
+        return 0.0
+
+    mva_factor = ((1.0 + rate_at_start) / denominator) ** t - 1.0
+    return excess_amount * mva_factor
+
 
 # ---------------------------------------------------------------------------
 # Policy year
