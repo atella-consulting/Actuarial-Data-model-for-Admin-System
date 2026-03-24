@@ -31,8 +31,36 @@ TODAY = pd.Timestamp(date.today())
 
 GMIR             = 0.01
 NONFORFEITURE    = 0.024
-MVA_REF_RATE     = 0.042
 PREMIUM_TAX_RATE = 0.0
+MVA_MIN_REF_RATE = 0.00
+MVA_MAX_REF_RATE = 0.10
+
+# ---------------------------------------------------------------------------
+# MVA market-rate data settings
+# ---------------------------------------------------------------------------
+# Number of calendar days at the *start* of each guarantee period during
+# which the MVA is waived
+MVA_WAIVER_DAYS: int = 30
+# Date column name in the MVA_Table tab
+MVA_DATE_COLUMN: str = "MDATE"
+MVA_RATE_COLUMNS: list = [
+    "M01", "M03", "M06",
+    "Y01", "Y02", "Y03",
+    "Y05", "Y07", "Y10",
+    "Y20", "Y30",
+]
+
+
+MVA_PLAN_TO_COLUMN: list = [
+    (1,  "Y01"),
+    (2,  "Y02"),
+    (3,  "Y03"),
+    (5,  "Y05"),
+    (7,  "Y07"),
+    (10, "Y10"),
+    (20, "Y20"),
+    (30, "Y30"),
+]
 
 # ---------------------------------------------------------------------------
 # Plan years
