@@ -11,11 +11,12 @@ import pytest
 
 from events.event_1 import process_initialization
 from events.event_2 import extract_event2_input, process_withdrawal
-from config import GMIR, NONFORFEITURE, MVA_REF_RATE, PREMIUM_TAX_RATE
+from config import GMIR, NONFORFEITURE, PREMIUM_TAX_RATE
 from tests.sample_data import (
     policy_row,
     sc_table,
     product_tables,
+    mva_rates_table,
     SINGLE_PREMIUM,
     ISSUE_DATE,
     GP_END,
@@ -47,7 +48,10 @@ def a_policy_snapshot(
         "AccountValue": account_value,
         "PenaltyFreeWithdrawalBalance": penalty_free_balance,
         "IssueDate": pd.Timestamp(ISSUE_DATE),
+        "GuaranteePeriodStartDate": pd.Timestamp(ISSUE_DATE),
         "GuaranteePeriodEndDate": pd.Timestamp(GP_END),
+        "MVAReferenceRateAtStart": 0.042,
+        "_mva_column": "Y05",
         "_cc": 0.0,         # Internal annual contract charge (zero for now)
     }
 
@@ -67,14 +71,15 @@ class TestMissingDatesGetFilledInAutomatically:
 
     def test_guarantee_start_date_defaults_to_issue_date_when_blank(self):
         surrender_charge_table = sc_table()
-        rates_table = product_tables()
+        product_table = product_tables()
+        mva_table = mva_rates_table()
 
         # Drop the GuaranteePeriodStartDate from the input to simulate it being left blank
         policy = a_standard_policy_row()
         if "GuaranteePeriodStartDate" in policy.index:
             policy = policy.drop("GuaranteePeriodStartDate")
 
-        result = process_initialization(policy, surrender_charge_table, rates_table)
+        result = process_initialization(policy, surrender_charge_table, product_table, mva_table)
 
         # The system should have filled in the issue date as the start date
         assert result.eod["GuaranteePeriodStartDate"] == pd.Timestamp(ISSUE_DATE)
@@ -85,7 +90,8 @@ class TestMissingDatesGetFilledInAutomatically:
         the system must use it — it should NOT recalculate and overwrite it.
         """
         surrender_charge_table = sc_table()
-        rates_table = product_tables()
+        product_table = product_tables()
+        mva_table = mva_rates_table()
 
         # The user manually set the guarantee end to a specific date
         user_provided_end_date = pd.Timestamp("2030-06-15")
@@ -93,7 +99,7 @@ class TestMissingDatesGetFilledInAutomatically:
         policy = a_standard_policy_row()
         policy["GuaranteePeriodEndDate"] = user_provided_end_date
 
-        result = process_initialization(policy, surrender_charge_table, rates_table)
+        result = process_initialization(policy, surrender_charge_table, product_table, mva_table)
 
         # The system should have kept the user's provided end date
         assert result.eod["GuaranteePeriodEndDate"] == user_provided_end_date
@@ -104,7 +110,8 @@ class TestMissingDatesGetFilledInAutomatically:
         use it and not recalculate it from the annuitant's date of birth.
         """
         surrender_charge_table = sc_table()
-        rates_table = product_tables()
+        product_table = product_tables()
+        mva_table = mva_rates_table()
 
         # The user manually set the maturity date
         user_provided_maturity_date = pd.Timestamp("2055-01-01")
@@ -112,7 +119,7 @@ class TestMissingDatesGetFilledInAutomatically:
         policy = a_standard_policy_row()
         policy["MaturityDate"] = user_provided_maturity_date
 
-        result = process_initialization(policy, surrender_charge_table, rates_table)
+        result = process_initialization(policy, surrender_charge_table, product_table, mva_table)
 
         # The system should have kept the user's provided maturity date
         assert result.eod["MaturityDate"] == user_provided_maturity_date
@@ -135,12 +142,13 @@ class TestContractLengthIsWorkedOutCorrectly:
         without needing to look at PlanCode at all.
         """
         surrender_charge_table = sc_table()
-        rates_table = product_tables()
- 
+        product_table = product_tables()
+        mva_table = mva_rates_table()
+
         policy = a_standard_policy_row()
         policy["ProductType"] = "7"
  
-        result = process_initialization(policy, surrender_charge_table, rates_table)
+        result = process_initialization(policy, surrender_charge_table, product_table, mva_table)
  
         guarantee_start = result.eod["GuaranteePeriodStartDate"]
         guarantee_end   = result.eod["GuaranteePeriodEndDate"]
@@ -161,13 +169,14 @@ class TestContractLengthIsWorkedOutCorrectly:
         and use that to set the guarantee term length.
         """
         surrender_charge_table = sc_table()
-        rates_table = product_tables()
- 
+        product_table = product_tables()
+        mva_table = mva_rates_table()
+
         policy = a_standard_policy_row()
         policy["ProductType"] = "UNKNOWN"   # force the fallback to PlanCode
         policy["PlanCode"]    = plan_code
  
-        result = process_initialization(policy, surrender_charge_table, rates_table)
+        result = process_initialization(policy, surrender_charge_table, product_table, mva_table)
  
         guarantee_start = result.eod["GuaranteePeriodStartDate"]
         guarantee_end   = result.eod["GuaranteePeriodEndDate"]
@@ -182,12 +191,13 @@ class TestContractLengthIsWorkedOutCorrectly:
         rather than crashing.
         """
         surrender_charge_table = sc_table()
-        rates_table = product_tables()
- 
+        product_table = product_tables()
+        mva_table = mva_rates_table()
+
         policy = a_standard_policy_row(product_type="UNKNOWN")
         policy["PlanCode"] = "MYGA_UNKNOWN"   # no trailing number to parse
  
-        result = process_initialization(policy, surrender_charge_table, rates_table)
+        result = process_initialization(policy, surrender_charge_table, product_table, mva_table)
  
         length_in_years = (
             result.eod["GuaranteePeriodEndDate"] - result.eod["GuaranteePeriodStartDate"]
@@ -210,8 +220,8 @@ class TestInterestAndTaxRatesFallBackToSystemDefaults:
         Guaranteed Minimum Interest Rate not on form
         → system uses the company-wide GMIR constant.
         """
-        policy = a_standard_policy_row().drop("GuaranteedMinimumInterestRate", errors="ignore") 
-        result = process_initialization(policy, sc_table(), product_tables())
+        policy = a_standard_policy_row().drop("GuaranteedMinimumInterestRate", errors="ignore")
+        result = process_initialization(policy, sc_table(), product_tables(), mva_rates_table())
         assert result.eod["GuaranteedMinimumInterestRate"] == pytest.approx(GMIR)
 
     def test_nonforfeiture_rate_uses_company_default_when_blank(self):
@@ -219,8 +229,8 @@ class TestInterestAndTaxRatesFallBackToSystemDefaults:
         Nonforfeiture Rate not on form
         → system uses the company-wide NONFORFEITURE constant.
         """
-        policy =  a_standard_policy_row().drop("NonforfeitureRate", errors="ignore")
-        result = process_initialization(policy, sc_table(), product_tables())
+        policy = a_standard_policy_row().drop("NonforfeitureRate", errors="ignore")
+        result = process_initialization(policy, sc_table(), product_tables(), mva_rates_table())
         assert result.eod["NonforfeitureRate"] == pytest.approx(NONFORFEITURE)
 
     def test_premium_tax_rate_uses_company_default_when_blank(self):
@@ -228,18 +238,21 @@ class TestInterestAndTaxRatesFallBackToSystemDefaults:
         Premium Tax Rate not on form
         → system uses the company-wide PREMIUM_TAX_RATE constant.
         """
-        policy =  a_standard_policy_row().drop("PremiumTaxRate", errors="ignore")
-        result = process_initialization(policy, sc_table(), product_tables())
+        policy = a_standard_policy_row().drop("PremiumTaxRate", errors="ignore")
+        result = process_initialization(policy, sc_table(), product_tables(), mva_rates_table())
         assert result.eod["PremiumTaxRate"] == pytest.approx(PREMIUM_TAX_RATE)
 
-    def test_mva_reference_rate_uses_company_default_when_blank(self):
-        """
-        MVA Reference Rate not on form
-        → system uses the company-wide MVA_REF_RATE constant.
-        """
-        policy =  a_standard_policy_row().drop("MVAReferenceRateAtStart", errors="ignore")
-        result = process_initialization(policy, sc_table(), product_tables())
-        assert result.eod["MVAReferenceRateAtStart"] == pytest.approx(MVA_REF_RATE)
+    def test_mva_reference_rate_is_looked_up_when_blank(self):
+        policy = a_standard_policy_row().drop("MVAReferenceRateAtStart", errors="ignore")
+
+        result = process_initialization(
+            policy,
+            sc_table(),
+            product_tables(),
+            mva_rates_table(),
+        )
+
+        assert result.eod["MVAReferenceRateAtStart"] == pytest.approx(0.042)
 
 
 class TestStartingBalancesFallBackToSensibleDefaults:
@@ -252,7 +265,7 @@ class TestStartingBalancesFallBackToSensibleDefaults:
         if "AccountValue" in policy.index:
             policy = policy.drop("AccountValue")
 
-        result = process_initialization(policy, sc_table(), product_tables())
+        result = process_initialization(policy, sc_table(), product_tables(), mva_rates_table())
 
         assert result.eod["AccountValue"] == pytest.approx(SINGLE_PREMIUM)
 
@@ -265,7 +278,7 @@ class TestStartingBalancesFallBackToSensibleDefaults:
         if "PenaltyFreeWithdrawalBalance" in policy.index:
             policy = policy.drop("PenaltyFreeWithdrawalBalance")
 
-        result = process_initialization(policy, sc_table(), product_tables())
+        result = process_initialization(policy, sc_table(), product_tables(), mva_rates_table())
 
         assert result.eod["PenaltyFreeWithdrawalBalance"] == pytest.approx(0.0)
 
@@ -278,7 +291,7 @@ class TestStartingBalancesFallBackToSensibleDefaults:
         if "AccumulatedInterestCurrentYear" in policy.index:
             policy = policy.drop("AccumulatedInterestCurrentYear")
 
-        result = process_initialization(policy, sc_table(), product_tables())
+        result = process_initialization(policy, sc_table(), product_tables(), mva_rates_table())
 
         assert result.eod["AccumulatedInterestCurrentYear"] == pytest.approx(0.0)
 
@@ -333,7 +346,12 @@ class TestWithdrawalArithmeticBoundaries:
             "Valuation Date": WD_VALUATION_DATE,
         }
 
-        result = process_withdrawal(policy_snapshot, withdrawal_request, sc_table())
+        result = process_withdrawal(
+            policy_snapshot,
+            withdrawal_request,
+            sc_table(),
+            mva_rates_table(),
+        )
 
         assert result.eod["AccountValue"] == pytest.approx(0.0)
         assert not result.validation.has_errors()
@@ -357,6 +375,69 @@ class TestWithdrawalArithmeticBoundaries:
             "Valuation Date": WD_VALUATION_DATE,
         }
 
-        result = process_withdrawal(policy_snapshot, withdrawal_request, sc_table())
+        result = process_withdrawal(
+            policy_snapshot,
+            withdrawal_request,
+            sc_table(),
+            mva_rates_table(),
+        )
 
         assert result.eod["PenaltyFreeWithdrawalBalance"] == pytest.approx(0.0)
+
+    class TestWithdrawalForMVA:
+        def test_process_withdrawal_within_penalty_free_gives_zero_mva(self):
+            policy_snapshot = a_policy_snapshot(
+                account_value=100_000.0,
+                penalty_free_balance=10_000.0,
+            )
+
+            rates_df = mva_rates_table()
+
+            withdrawal_request = {
+                "Gross WD": 5_000.0,
+                "Valuation Date": "2026-06-15",
+            }
+
+            result = process_withdrawal(policy_snapshot, withdrawal_request, sc_table(), rates_df)
+
+            assert result.eod["MVA"] == pytest.approx(0.0)
+
+
+        def test_process_withdrawal_excess_amount_can_produce_positive_mva(self):
+            policy_snapshot = a_policy_snapshot(
+                account_value=100_000.0,
+                penalty_free_balance=5_000.0,
+            )
+            policy_snapshot["MVAReferenceRateAtStart"] = 0.05
+
+            rates_df = mva_rates_table()
+
+            withdrawal_request = {
+                "Gross WD": 8_000.0,
+                "Valuation Date": "2026-06-15",
+            }
+
+            result = process_withdrawal(policy_snapshot, withdrawal_request, sc_table(), rates_df)
+
+            assert result.eod["MVA"] > 0.0
+
+
+        def test_process_withdrawal_waiver_window_gives_zero_mva(self):
+            policy_snapshot = a_policy_snapshot(
+                account_value=100_000.0,
+                penalty_free_balance=5_000.0,
+            )
+            policy_snapshot["GuaranteePeriodStartDate"] = "2026-06-01"
+            policy_snapshot["ValuationDate"] = "2026-06-01"
+
+            rates_df = mva_rates_table()
+
+            withdrawal_request = {
+                "Gross WD": 8_000.0,
+                "Valuation Date": "2026-06-15",
+            }
+
+            result = process_withdrawal(policy_snapshot, withdrawal_request, sc_table(), rates_df)
+
+            assert result.eod["MVA"] == pytest.approx(0.0)
+            assert result.eod["_mva_waived"] is True

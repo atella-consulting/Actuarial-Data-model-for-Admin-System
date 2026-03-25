@@ -86,3 +86,28 @@ def sc_table() -> pd.DataFrame:
 def product_tables(credit_rate: str = "5.75%") -> dict:
     """creates fake product setup data with the specified crediting rate."""
     return {"CreditingRate": {"5-year": credit_rate}}
+
+import pandas as pd
+
+def mva_rates_table() -> pd.DataFrame:
+    """
+    Fake market-rate table used for MVA lookups.
+    Must contain:
+      - issue date for Event 1 start-rate lookup
+      - day before withdrawal date for Event 2 current-rate lookup
+      - columns for 3/5/7/10-year products
+    """
+    idx = pd.to_datetime([
+        "2026-01-15",  # issue / gp start
+        "2026-06-14",  # day before WD_VALUATION_DATE = 2026-06-15
+    ])
+
+    return pd.DataFrame(
+        {
+            "Y03": [0.040, 0.041],
+            "Y05": [0.042, 0.043],
+            "Y07": [0.044, 0.045],
+            "Y10": [0.046, 0.047],
+        },
+        index=idx,
+    )
