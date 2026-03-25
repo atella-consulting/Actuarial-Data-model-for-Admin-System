@@ -162,16 +162,31 @@ def test_validate_withdrawal_wd_exceeds_av_is_error():
     assert "GrossWD" in dict(result.errors())
 
 def test_validate_withdrawal_wd_exactly_equals_av_is_not_error():
-    result = validate_withdrawal(100_000, 100_000, 50_000, event_date_provided=True)
+    result = validate_withdrawal(
+        100_000,
+        100_000,
+        50_000,
+        event_date_provided=True,
+        rate_at_start=0.05,
+        rate_current=0.06,
+    )
     assert not result.has_errors()
-
+    assert result.has_warnings()
+    assert "GrossWD" in dict(result.warnings())
 
 # ---------------------------------------------------------------------------
 # validate_withdrawal — GrossWD exceeds PenaltyFreeWithdrawalBalance (warning only)
 # ---------------------------------------------------------------------------
 
-def test_validate_withdrawal_wd_exceeds_pfwb_is_warning():
-    result = validate_withdrawal(6_000, 100_000, 5_000, event_date_provided=True)
+def test_validate_withdrawal_wd_exceeds_pfwb_is_warning_when_mva_rates_are_present():
+    result = validate_withdrawal(
+        6_000,
+        100_000,
+        5_000,
+        event_date_provided=True,
+        rate_at_start=0.05,
+        rate_current=0.06,
+    )
     assert not result.has_errors()
     assert result.has_warnings()
     assert "GrossWD" in dict(result.warnings())
@@ -186,3 +201,57 @@ def test_validate_withdrawal_wd_av_error_prevents_pfwb_warning():
     assert result.has_errors()
     pfwb_warnings = [f for f, _ in result.warnings() if "PFWB" in f]
     assert pfwb_warnings == []
+
+# ---------------------------------------------------------------------------
+# validate_withdrawal — MVA warnings
+# ---------------------------------------------------------------------------
+
+def test_validate_withdrawal_excess_wd_missing_rate_at_start_is_error():
+    result = validate_withdrawal(
+        gross_wd=6_000,
+        pre_av=100_000,
+        pfwb=5_000,
+        event_date_provided=True,
+        rate_at_start=None,
+        rate_current=0.04,
+    )
+    assert result.has_errors()
+    assert "MVAReferenceRateAtStart" in dict(result.errors())
+
+
+def test_validate_withdrawal_excess_wd_missing_current_rate_is_error():
+    result = validate_withdrawal(
+        gross_wd=6_000,
+        pre_av=100_000,
+        pfwb=5_000,
+        event_date_provided=True,
+        rate_at_start=0.04,
+        rate_current=None,
+    )
+    assert result.has_errors()
+    assert "MVAReferenceRateCurrent" in dict(result.errors())
+
+
+def test_validate_withdrawal_large_rate_change_is_warning():
+    result = validate_withdrawal(
+        gross_wd=6_000,
+        pre_av=100_000,
+        pfwb=5_000,
+        event_date_provided=True,
+        rate_at_start=0.01,
+        rate_current=0.15,
+    )
+    assert result.has_warnings()
+    assert "MVARateChange" in dict(result.warnings())
+
+
+def test_validate_withdrawal_within_pfwb_does_not_require_mva_rates():
+    result = validate_withdrawal(
+        gross_wd=4_000,
+        pre_av=100_000,
+        pfwb=5_000,
+        event_date_provided=True,
+        rate_at_start=None,
+        rate_current=None,
+    )
+    assert not result.has_errors()
