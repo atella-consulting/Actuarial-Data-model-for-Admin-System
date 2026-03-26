@@ -17,9 +17,9 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from config import STATIC_CARRY
+from config import STATIC_CARRY, PLAN_YEARS
 from calculations import snapshot
-from utils import to_ts, sfloat, safe_replace_year
+from utils import to_ts, sfloat, safe_replace_year, as_code
 
 
 def roll_forward(
@@ -83,6 +83,18 @@ def roll_forward(
     annual_cc    = sfloat(prior_eod.get("_cc"), 0.0)   # internal contract-charge field
     mva_column   = prior_eod.get("_mva_column")         # resolved rate-file tenor column
 
+    effective_date = to_ts(prior_eod.get("EffectiveDate"))
+    if pd.isna(effective_date):
+        effective_date = issue_dt
+
+    term_period = prior_eod.get("Term_Period")
+    if term_period in (None, "", float("nan")):
+        term_period = PLAN_YEARS.get(as_code(prior_eod.get("ProductType")))
+
+    nfr = sfloat(prior_eod.get("NonforfeitureRate"))
+    prior_gmav = sfloat(prior_eod.get("GuaranteedMinimumAV"), prior_av)
+    mgsv_contract_charge = sfloat(prior_eod.get("_mgsv_cc"), 0.0)
+
     # ------------------------------------------------------------------
     # 1. Grow account value using compound interest on a 365-day basis.
     # ------------------------------------------------------------------
@@ -91,6 +103,13 @@ def roll_forward(
 
     # 2. Subtract the daily portion of the annual contract charge.
     new_av = av_before_charge - annual_cc * (day_count / 365)
+
+    # ------------------------------------------------------------------
+    # 2A. Grow guaranteed minimum account value using the
+    #     nonforfeiture rate on a 365-day basis.
+    # ------------------------------------------------------------------
+    gmav_growth = (1 + nfr) ** (day_count / 365) if day_count > 0 else 1.0
+    new_gmav = prior_gmav * gmav_growth
 
     # ------------------------------------------------------------------
     # 3. Handle AccumulatedInterestCurrentYear.
@@ -103,8 +122,16 @@ def roll_forward(
 
     if not pd.isna(anniversary) and new_date.date() == anniversary.date():
         acc_int = period_interest
+        new_gmav -= mgsv_contract_charge
     else:
         acc_int = sfloat(prior_eod.get("AccumulatedInterestCurrentYear"), 0.0) + period_interest
+
+    if pd.isna(anniversary):
+        anniversary_next = pd.NaT
+    elif new_date.date() < anniversary.date():
+        anniversary_next = anniversary
+    else:
+        anniversary_next = safe_replace_year(issue_dt, new_date.year + 1)
 
     # ------------------------------------------------------------------
     # 4. Build the new state dict.
@@ -118,7 +145,11 @@ def roll_forward(
         {
             "ValuationDate": new_date,
             "Event": "Valuation",
+            "EffectiveDate": effective_date,
+            "Term_Period": term_period,
+            "AnniversaryDateNext": anniversary_next,
             "AccountValue": new_av,
+            "GuaranteedMinimumAV": new_gmav,
             "DailyInterest": period_interest,
             "AccumulatedInterestCurrentYear": acc_int,
             # Derived snapshot fields
@@ -129,6 +160,7 @@ def roll_forward(
             "Tax":     None,
             # Internal helpers — preserve for future rolls
             "_cc":         annual_cc,
+            "_mgsv_cc":    mgsv_contract_charge,
             "_mva_column": mva_column,
         }
     )

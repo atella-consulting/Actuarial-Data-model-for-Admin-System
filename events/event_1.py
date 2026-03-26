@@ -32,6 +32,7 @@ from utils import (
     pick_first,
     merge_state,
     add_years,
+    safe_replace_year,
 )
 from calculations import snapshot, maturity_date_from_issue_and_annuitant, resolve_mva_column, get_mva_rate
 from validation import validate_initialization
@@ -61,6 +62,9 @@ def process_initialization(
     product_type = as_code(pick_first(row, "ProductType"))
     plan_code    = as_code(pick_first(row, "PlanCode"))
 
+    if pd.isna(val_date):
+        val_date = issue_dt
+
     # ------------------------------------------------------------------
     # 2. Resolve the guarantee term (3 / 5 / 7 / 10 years)
     # ------------------------------------------------------------------
@@ -81,6 +85,7 @@ def process_initialization(
     if plan_key not in PLAN_YEARS:
         plan_key = "5"          # nothing matched — fall back to 5-year default
     plan_years = PLAN_YEARS[plan_key]
+    term_period = plan_years
 
     mva_column: str = resolve_mva_column(plan_years)
 
@@ -105,6 +110,9 @@ def process_initialization(
     gp_end = to_ts(pick_first(row, "GuaranteePeriodEndDate"))
     if pd.isna(gp_end):
         gp_end = add_years(gp_start, plan_years)
+
+    effective_date = issue_dt
+    anniversary_date_next = safe_replace_year(issue_dt, issue_dt.year + 1) if not pd.isna(issue_dt) else pd.NaT
 
     # ------------------------------------------------------------------
     # 5. Maturity date
@@ -156,11 +164,13 @@ def process_initialization(
     # 7. Balance fields
     # ------------------------------------------------------------------
     account_value = sfloat(pick_first(row, "AccountValue"), premium)
+    guaranteed_minimum_av = sfloat(pick_first(row, "GuaranteedMinimumAV"), account_value)
     acc_int       = sfloat(pick_first(row, "AccumulatedInterestCurrentYear"), 0.0)
     pfwb          = sfloat(pick_first(row, "PenaltyFreeWithdrawalBalance"), 0.0)
 
     # Annual contract charge — placeholder; extend via product_tables later
     annual_contract_charge = 0.0
+    mgsv_contract_charge   = sfloat(pick_first(row, "MGSV_ContractCharge", "MGSV Contract Charge"), 0.0)
 
     # ------------------------------------------------------------------
     # 8. Validation
@@ -195,8 +205,12 @@ def process_initialization(
     }
 
     calc: Dict[str, Any] = {
+        "EffectiveDate":                effective_date,
+        "AnniversaryDateNext":         anniversary_date_next,
+        "Term_Period":                 term_period,
         "GuaranteedMinimumInterestRate": gmir,
         "NonforfeitureRate":             nonforf,
+        "GuaranteedMinimumAV":           guaranteed_minimum_av,
         "MaturityDate":                  maturity_date,
         "PremiumTaxRate":                premium_tax,
         "GuaranteePeriodStartDate":      gp_start,
@@ -218,6 +232,7 @@ def process_initialization(
             "Net":     None,
             "Tax":     None,
             "_cc":          annual_contract_charge,  # internal field for roll_forward
+            "_mgsv_cc":     mgsv_contract_charge,    # internal field for roll_forward
             "_mva_column":  mva_column,              # resolved tenor column for MVA lookups
         },
     )

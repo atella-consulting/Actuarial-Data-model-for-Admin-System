@@ -40,7 +40,9 @@ class Policy:
 
     PolicyNumber: Optional[str] = None
     IssueDate: Optional[pd.Timestamp] = None
+    EffectiveDate: Optional[pd.Timestamp] = None
     ProductType: Optional[str] = None
+    Term_Period: Optional[int] = None
     PlanCode: Optional[str] = None
     IssueAge: Optional[float] = None
     State: Optional[str] = None
@@ -90,8 +92,10 @@ class AccountState:
 
     ValuationDate: Optional[pd.Timestamp] = None
     Event: Optional[str] = None
+    AnniversaryDateNext: Optional[pd.Timestamp] = None
 
     AccountValue: float = 0.0
+    GuaranteedMinimumAV: float = 0.0
     AccumulatedInterestCurrentYear: float = 0.0
     PenaltyFreeWithdrawalBalance: float = 0.0
 
