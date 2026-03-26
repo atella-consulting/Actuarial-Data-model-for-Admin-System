@@ -68,23 +68,14 @@ def process_initialization(
     # ------------------------------------------------------------------
     # 2. Resolve the guarantee term (3 / 5 / 7 / 10 years)
     # ------------------------------------------------------------------
-    import re
+    if product_type not in PLAN_YEARS:
+        raise ValueError(
+            "ProductType must be one of: "
+            "MYGA_3, MYGA_5, MYGA_7, MYGA_10. "
+            f"Got: {product_type!r}"
+        )
 
-    # ProductType arrives as a plain number ("3", "5", "7", "10") — try it first.
-    # PlanCode arrives as "MYGA_5" or "FIA_10" — extract the trailing number.
-    def _extract_trailing_number(code: str) -> str:
-        """Pull the last run of digits from a code string, e.g. 'MYGA_10' → '10'."""
-        match = re.search(r"(\d+)$", str(code or ""))
-        return match.group(1) if match else ""
-
-    if product_type in PLAN_YEARS:
-        plan_key = product_type
-    else:
-        plan_key = _extract_trailing_number(plan_code)
-
-    if plan_key not in PLAN_YEARS:
-        plan_key = "5"          # nothing matched — fall back to 5-year default
-    plan_years = PLAN_YEARS[plan_key]
+    plan_years = PLAN_YEARS[product_type]
     term_period = plan_years
 
     mva_column: str = resolve_mva_column(plan_years)
@@ -124,7 +115,7 @@ def process_initialization(
     # ------------------------------------------------------------------
     # 6. Rates — prefer input values, then lookups, then hard defaults
     # ------------------------------------------------------------------
-    rate_key = f"{plan_key}-year"
+    rate_key = f"{plan_years}-year"
     lookup_ccr = (
         to_pct(product_tables.get("CreditingRate", {}).get(rate_key, 0.0))
         if product_tables
@@ -177,7 +168,7 @@ def process_initialization(
     # ------------------------------------------------------------------
     issue_age_raw = pick_first(row, "IssueAge")
     issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
-    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium, acc_int)
+    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium, acc_int, product_type)
     if result.has_errors():
         raise ValueError(
             f"[PolicyIssue] fatal validation errors:\n{result.error_summary()}"

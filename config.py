@@ -69,10 +69,10 @@ MVA_PLAN_TO_COLUMN: list = [
 # Example: product type "5" → 5-year guarantee period.
 
 PLAN_YEARS: dict = {
-    "3":  3,
-    "5":  5,
-    "7":  7,
-    "10": 10,
+    "MYGA_3":  3,
+    "MYGA_5":  5,
+    "MYGA_7":  7,
+    "MYGA_10": 10,
 }
 
 # ---------------------------------------------------------------------------

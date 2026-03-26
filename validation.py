@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from config import TODAY, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE
+from config import TODAY, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE, PLAN_YEARS
 from models import ValidationResult
 from utils import sfloat, nonempty, to_ts
 
@@ -38,6 +38,7 @@ def validate_initialization(
     issue_age: Optional[float],
     premium: float,
     AccumulatedInterestCurrentYear: Optional[float] = None,
+    product_type: Optional[str] = None,
 ) -> ValidationResult:
     """
     Validate the core fields read during policy initialization (Event 1).
@@ -86,7 +87,16 @@ def validate_initialization(
                 "AccumulatedInterestCurrentYear outside recommended range [10,000 ; 1,000,000]",
             )
 
+    # --- ProductType ---
+    if product_type not in PLAN_YEARS:
+        result.add_error(
+            "ProductType",
+            "ProductType must be one of: MYGA_3, MYGA_5, MYGA_7, MYGA_10"
+        )
+
     return result
+
+
 
 
 # ---------------------------------------------------------------------------
