@@ -61,6 +61,8 @@ def process_initialization(
     premium      = sfloat(pick_first(row, "SinglePremium"))
     product_type = as_code(pick_first(row, "ProductType"))
     plan_code    = as_code(pick_first(row, "PlanCode"))
+    state_raw    = pick_first(row, "State")
+    state = str(state_raw).strip().upper() if nonempty(state_raw) else None
 
     if pd.isna(val_date):
         val_date = issue_dt
@@ -168,7 +170,7 @@ def process_initialization(
     # ------------------------------------------------------------------
     issue_age_raw = pick_first(row, "IssueAge")
     issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
-    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium, acc_int, product_type)
+    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium, acc_int, product_type, state)
     if result.has_errors():
         raise ValueError(
             f"[PolicyIssue] fatal validation errors:\n{result.error_summary()}"
@@ -185,7 +187,7 @@ def process_initialization(
         "ProductType":                     pick_first(row, "ProductType"),
         "PlanCode":                        pick_first(row, "PlanCode"),
         "IssueAge":                        pick_first(row, "IssueAge"),
-        "State":                           pick_first(row, "State"),
+        "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
         "AnnuitantDOB":                    annuitant,
