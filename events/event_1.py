@@ -34,14 +34,20 @@ from utils import (
     add_years,
     safe_replace_year,
 )
-from calculations import snapshot, maturity_date_from_issue_and_annuitant, resolve_mva_column, get_mva_rate
+from calculations import (
+    snapshot,
+    maturity_date_from_issue_and_annuitant,
+    resolve_mva_column,
+    get_mva_rate,
+    lookup_product_table_rate,
+)
 from validation import validate_initialization
 
 
 def process_initialization(
     row: "pd.Series",
     sc_tbl: Optional[pd.DataFrame],
-    product_tables: Dict[str, Any],
+    product_tables: pd.DataFrame,
     rates_df: Optional[pd.DataFrame] = None,
 ) -> EventOutput:
     """
@@ -115,22 +121,38 @@ def process_initialization(
         maturity_date = maturity_date_from_issue_and_annuitant(issue_dt, annuitant)
 
     # ------------------------------------------------------------------
-    # 6. Rates — prefer input values, then lookups, then hard defaults
+    # 6. Rates — prefer input values, then ProductTables lookups, then hard defaults
     # ------------------------------------------------------------------
-    rate_key = f"{plan_years}-year"
-    lookup_ccr = (
-        to_pct(product_tables.get("CreditingRate", {}).get(rate_key, 0.0))
-        if product_tables
-        else 0.0
+    lookup_date = val_date if not pd.isna(val_date) else issue_dt
+
+    lookup_ccr = lookup_product_table_rate(
+        product_tables,
+        "CreditingRate",
+        product_type,
+        lookup_date,
+    )
+
+    lookup_gmir = lookup_product_table_rate(
+        product_tables,
+        "GuaranteedMinimumInterestRate",
+        product_type,
+        lookup_date,
+    )
+
+    lookup_nonforf = lookup_product_table_rate(
+        product_tables,
+        "NonforfeitureRate",
+        product_type,
+        lookup_date,
     )
 
     gmir = to_pct(pick_first(row, "GuaranteedMinimumInterestRate"))
     if gmir is None:
-        gmir = GMIR
+        gmir = lookup_gmir if lookup_gmir is not None else GMIR
 
     nonforf = to_pct(pick_first(row, "NonforfeitureRate"))
     if nonforf is None:
-        nonforf = NONFORFEITURE
+        nonforf = lookup_nonforf if lookup_nonforf is not None else NONFORFEITURE
 
     premium_tax = to_pct(pick_first(row, "PremiumTaxRate"))
     if premium_tax is None:
@@ -138,7 +160,7 @@ def process_initialization(
 
     current_credit_rate = to_pct(pick_first(row, "CurrentCreditRate"))
     if current_credit_rate is None:
-        current_credit_rate = lookup_ccr or 0.0
+        current_credit_rate = lookup_ccr if lookup_ccr is not None else 0.0
 
     mva_ref = to_pct(pick_first(row, "MVAReferenceRateAtStart"))
     if mva_ref is None:
@@ -170,7 +192,22 @@ def process_initialization(
     # ------------------------------------------------------------------
     issue_age_raw = pick_first(row, "IssueAge")
     issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
-    result: ValidationResult = validate_initialization(issue_dt, issue_age, premium, acc_int, product_type, state)
+    
+    result: ValidationResult = validate_initialization(
+        issue_dt,
+        issue_age,
+        premium,
+        acc_int,
+        product_type,
+        state,
+        current_credit_rate_input=pick_first(row, "CurrentCreditRate"),
+        gmir_input=pick_first(row, "GuaranteedMinimumInterestRate"),
+        nonforf_input=pick_first(row, "NonforfeitureRate"),
+        lookup_ccr=lookup_ccr,
+        lookup_gmir=lookup_gmir,
+        lookup_nonforf=lookup_nonforf,
+        lookup_date=lookup_date,
+)
     if result.has_errors():
         raise ValueError(
             f"[PolicyIssue] fatal validation errors:\n{result.error_summary()}"

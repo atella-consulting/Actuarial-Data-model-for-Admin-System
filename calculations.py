@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from utils import to_ts, sfloat, safe_replace_year
+from utils import to_ts, to_pct, sfloat, safe_replace_year
 
 from config import MVA_DATE_COLUMN, MVA_RATE_COLUMNS, MVA_PLAN_TO_COLUMN, MVA_WAIVER_DAYS, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE
 
@@ -73,6 +73,40 @@ def get_mva_rate(
 
     return None
 
+def lookup_product_table_rate(
+    product_tables: pd.DataFrame,
+    table_name: str,
+    product_type: str,
+    valuation_date: Any,
+) -> Optional[float]:
+    """
+    Return the ProductTables rate for the given table/product/date.
+
+    Rule:
+      choose the row with the latest EffectiveDate such that
+      EffectiveDate <= valuation_date.
+    """
+    if product_tables is None or product_tables.empty:
+        return None
+
+    val_ts = to_ts(valuation_date)
+    if pd.isna(val_ts):
+        return None
+
+    product_type = "" if product_type is None else str(product_type).strip()
+    table_name = "" if table_name is None else str(table_name).strip()
+
+    eligible = product_tables[
+        (product_tables["TableName"] == table_name)
+        & (product_tables["ProductType"] == product_type)
+        & (product_tables["EffectiveDate"] <= val_ts)
+    ].copy()
+
+    if eligible.empty:
+        return None
+
+    eligible = eligible.sort_values("EffectiveDate")
+    return to_pct(eligible.iloc[-1]["Value"])
 
 def is_mva_waiver_window(
     val_date: Any,

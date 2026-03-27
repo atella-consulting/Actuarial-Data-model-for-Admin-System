@@ -48,35 +48,68 @@ def prompt_path(prompt: str, default: str) -> str:
 # Workbook loaders
 # ---------------------------------------------------------------------------
 
-def load_product_tables(xls: pd.ExcelFile) -> Dict[str, Any]:
+def load_product_tables(xls: pd.ExcelFile) -> pd.DataFrame:
     """
-    Read the ``ProductTables`` sheet and return a nested dict.
+    Read the ``ProductTables`` sheet and return one normalised DataFrame.
 
-    Result shape::
-
-        {
-            "CreditingRate":  {"5-year": "5.75%"},
-            "ContractCharge": {"Annual": 0},
-        }
-
-    Returns ``{}`` if the sheet does not exist.
+    The sheet may contain multiple repeated 4-column blocks across the tab,
+    each with headers:
+        TableName | ProductType | Value | Effective Date
     """
     if "ProductTables" not in xls.sheet_names:
-        return {}
+        return pd.DataFrame(columns=["TableName", "ProductType", "Value", "EffectiveDate"])
 
-    df = pd.read_excel(xls, sheet_name="ProductTables", engine="openpyxl")
-    if "TableName" not in df.columns:
-        df = pd.read_excel(
-            xls, sheet_name="ProductTables", skiprows=1, engine="openpyxl"
+    raw = pd.read_excel(
+        xls,
+        sheet_name="ProductTables",
+        engine="openpyxl",
+        header=None,
+    )
+
+    blocks = []
+
+    def _norm_header(x: Any) -> str:
+        s = "" if pd.isna(x) else str(x).strip()
+        s = s.replace("\n", " ")
+        s = " ".join(s.split())
+        return s.lower()
+
+    ncols = raw.shape[1]
+
+    for start_col in range(0, ncols - 3):
+        headers = [_norm_header(raw.iat[1, start_col + i]) for i in range(4)]
+        if headers == ["tablename", "producttype", "value", "effective date"]:
+            block = raw.iloc[2:, start_col:start_col + 4].copy()
+            block.columns = ["TableName", "ProductType", "Value", "EffectiveDate"]
+            blocks.append(block)
+
+    if not blocks:
+        raise ValueError(
+            "ProductTables tab does not contain any valid 4-column blocks with headers: "
+            "TableName, ProductType, Value, Effective Date."
         )
 
-    tables: Dict[str, Any] = {}
-    for _, row in df.iterrows():
-        table_name = str(row.get("TableName", "")).strip()
-        key = str(row.get("Key", "")).strip()
-        if table_name and key and table_name != "nan":
-            tables.setdefault(table_name, {})[key] = row.get("Value")
-    return tables
+    df = pd.concat(blocks, ignore_index=True)
+
+    df["TableName"] = df["TableName"].astype(str).str.strip()
+    df["ProductType"] = df["ProductType"].astype(str).str.strip()
+    df["EffectiveDate"] = pd.to_datetime(df["EffectiveDate"], errors="coerce")
+
+    # Drop blank rows
+    df = df[
+        df["TableName"].ne("")
+        & df["ProductType"].ne("")
+        & df["TableName"].ne("nan")
+        & df["ProductType"].ne("nan")
+        & df["Value"].notna()
+        & df["EffectiveDate"].notna()
+    ].copy()
+
+    df = df.sort_values(
+        ["TableName", "ProductType", "EffectiveDate"]
+    ).reset_index(drop=True)
+
+    return df
 
 
 def load_surrender_charges(xls: pd.ExcelFile) -> pd.DataFrame:

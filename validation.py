@@ -40,6 +40,14 @@ def validate_initialization(
     AccumulatedInterestCurrentYear: Optional[float] = None,
     product_type: Optional[str] = None,
     state: Optional[str] = None,
+    *,
+    current_credit_rate_input: Any = None,
+    gmir_input: Any = None,
+    nonforf_input: Any = None,
+    lookup_ccr: Optional[float] = None,
+    lookup_gmir: Optional[float] = None,
+    lookup_nonforf: Optional[float] = None,
+    lookup_date: Optional[pd.Timestamp] = None,
 ) -> ValidationResult:
     """
     Validate the core fields read during policy initialization (Event 1).
@@ -104,6 +112,29 @@ def validate_initialization(
                 f"State ({state}) is not in the allowed state list"
             )
 
+    # --- ProductTables lookup warnings ---
+    if lookup_date is not None:
+        lookup_date_str = (
+            lookup_date.date() if hasattr(lookup_date, "date") else lookup_date
+        )
+
+        if not nonempty(current_credit_rate_input) and lookup_ccr is None:
+            result.add_warning(
+                "CurrentCreditRate",
+                f"No ProductTables match found for CreditingRate / {product_type} / <= {lookup_date_str}"
+            )
+
+        if not nonempty(gmir_input) and lookup_gmir is None:
+            result.add_warning(
+                "GuaranteedMinimumInterestRate",
+                f"No ProductTables match found for GuaranteedMinimumInterestRate / {product_type} / <= {lookup_date_str}"
+            )
+
+        if not nonempty(nonforf_input) and lookup_nonforf is None:
+            result.add_warning(
+                "NonforfeitureRate",
+                f"No ProductTables match found for NonforfeitureRate / {product_type} / <= {lookup_date_str}"
+            )
     return result
 
 
