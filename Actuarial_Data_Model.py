@@ -270,16 +270,27 @@ def main() -> None:
     event2_input = extract_event2_input(init_row)
 
     if event2_input is not None:
-        # 5a. Roll forward to the Event 2 valuation date
+        event1_val_date = pd.to_datetime(event1_output.eod.get("ValuationDate"), errors="coerce")
+        if pd.isna(event1_val_date):
+            raise ValueError("Event 1 valuation date is missing; cannot derive Event 2 valuation date.")
+
+        # New rule:
+        # only one valuation date is read from input;
+        # Event 2 always uses the next calendar day.
+        event2_val_date = event1_val_date + pd.Timedelta(days=1)
+
+        # 5a. Roll forward to the derived Event 2 valuation date
         valuation_state = roll_forward(
             event1_output.eod,
             surrender_charges,
-            target_date=event2_input.get("Valuation Date"),
+            target_date=event2_val_date,
         )
         valuation_date = fmt_date(valuation_state.get("ValuationDate"))
         col_specs.append((f"Valuation {valuation_date}", valuation_state))
 
-        # 5b. Apply the withdrawal
+        # 5b. Apply the withdrawal on that same derived date
+        event2_input["Valuation Date"] = event2_val_date
+
         event2_output: EventOutput = process_withdrawal(
             valuation_state, event2_input, surrender_charges, rates_df=rates_df
         )

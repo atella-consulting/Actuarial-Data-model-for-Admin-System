@@ -35,6 +35,10 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
     """
     Inspect the policy input row and return an event-input dict for
     Event 2 if a non-zero Gross WD is present.
+
+    Event 2 no longer reads a separate valuation date from input.
+    The orchestrator derives Event 2's date automatically as the
+    next calendar day after Event 1's valuation date.
     """
     gross_wd = pick_first(row, "Gross WD")
 
@@ -44,14 +48,11 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
     if sfloat(gross_wd, 0.0) == 0.0:
         return None
 
-    event_date = pick_first(row, "Valuation Date.1")
-
     return {
-        "EventType":    "PartialWithdrawal",
-        "Valuation Date": event_date,
-        "Gross WD":     gross_wd,
-        "Net":          pick_first(row, "Net"),
-        "Tax":          pick_first(row, "Tax"),
+        "EventType": "PartialWithdrawal",
+        "Gross WD":  gross_wd,
+        "Net":       pick_first(row, "Net"),
+        "Tax":       pick_first(row, "Tax"),
     }
 
 
@@ -87,8 +88,7 @@ def process_withdrawal(
         if nonempty(event_date_raw)
         else to_ts(val_state["ValuationDate"])
     )
-    event_date_provided = nonempty(event_date_raw)
-
+    
     gross_wd = sfloat(event_input.get("Gross WD"))
     net      = sfloat(event_input.get("Net"),  None) if nonempty(event_input.get("Net"))  else None
     tax      = sfloat(event_input.get("Tax"),  None) if nonempty(event_input.get("Tax"))  else None
@@ -123,9 +123,8 @@ def process_withdrawal(
         gross_wd,
         pre_av,
         pfwb,
-        event_date_provided,
         rate_at_start,
-        rate_current,
+        rate_current
     )
     if result.has_errors():
         raise ValueError(

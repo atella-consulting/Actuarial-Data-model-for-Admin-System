@@ -148,7 +148,6 @@ def validate_withdrawal(
     gross_wd: float,
     pre_av: float,
     pfwb: float,
-    event_date_provided: bool,
     rate_at_start: Optional[float] = None,
     rate_current: Optional[float] = None,
 ) -> ValidationResult:
@@ -157,7 +156,7 @@ def validate_withdrawal(
 
     Rules
     -----
-    - ValuationDate missing → use next valuation date             → W
+    - Event 2 valuation date is system-derived from Event 1 valuation date + 1 day
     - GrossWD > AccountValue → withdrawal exceeds account value   → E
     - GrossWD > PFWB         → withdrawal exceeds penalty-free
                                withdrawal balance                  → W
@@ -167,13 +166,6 @@ def validate_withdrawal(
     - |rate_current - rate_at_start| > 0.10 → large rate change (>10 pp)         → W
     """
     result = ValidationResult()
-
-    # --- ValuationDate ---
-    if not event_date_provided:
-        result.add_warning(
-            "ValuationDate",
-            "Event2 valuation date missing; defaulted to next valuation date",
-        )
 
     # --- GrossWD vs AccountValue (fatal) ---
     if gross_wd > pre_av:
