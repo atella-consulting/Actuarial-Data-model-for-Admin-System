@@ -73,9 +73,9 @@ MVA_PLAN_TO_COLUMN: list = [
 # Example: product type "5" → 5-year guarantee period.
 
 PLAN_YEARS: dict = {
-    "MYGA_3":  3,
-    "MYGA_5":  5,
-    "MYGA_7":  7,
+    "MYGA_03":  3,
+    "MYGA_05":  5,
+    "MYGA_07":  7,
     "MYGA_10": 10,
 }
 
@@ -221,3 +221,15 @@ STATIC_CARRY: list = [
     "AccumulatedInterestCurrentYear",
     "PenaltyFreeWithdrawalBalance",
 ]
+
+# ---------------------------------------------------------------------------
+# Audit control
+# ---------------------------------------------------------------------------
+# Controls whether audit rows are generated, and for which policies.
+#
+#   "none"     — no audit output (default for large production runs)
+#   "selected" — audit only the policies listed in AUDIT_SELECTED_POLICIES
+#   "all"      — audit every policy in the run
+
+AUDIT_MODE: str = "none"
+AUDIT_SELECTED_POLICIES: list = []   # e.g. [1, 4, 102]  — used when mode is "selected"
