@@ -21,6 +21,7 @@ from config import (
     NONFORFEITURE,
     PREMIUM_TAX_RATE,
     PLAN_YEARS,
+    MGSV_CONTRACT_CHARGE
 )
 from models import EventOutput, ValidationResult
 from utils import (
@@ -183,16 +184,12 @@ def process_initialization(
     acc_int       = sfloat(pick_first(row, "AccumulatedInterestCurrentYear"), 0.0)
     pfwb          = sfloat(pick_first(row, "PenaltyFreeWithdrawalBalance"), 0.0)
 
-    # Annual contract charge — placeholder; extend via product_tables later
-    annual_contract_charge = 0.0
-    mgsv_contract_charge   = sfloat(pick_first(row, "MGSV_ContractCharge", "MGSV Contract Charge"), 0.0)
-
     # ------------------------------------------------------------------
     # 8. Validation
     # ------------------------------------------------------------------
     issue_age_raw = pick_first(row, "IssueAge")
     issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
-    
+
     result: ValidationResult = validate_initialization(
         issue_dt,
         issue_age,
@@ -261,8 +258,7 @@ def process_initialization(
             "GrossWD": None,
             "Net":     None,
             "Tax":     None,
-            "_cc":          annual_contract_charge,  # internal field for roll_forward
-            "_mgsv_cc":     mgsv_contract_charge,    # internal field for roll_forward
+            "_mgsv_cc":     MGSV_CONTRACT_CHARGE,    # internal field for roll_forward
             "_mva_column":  mva_column,              # resolved tenor column for MVA lookups
         },
     )

@@ -60,12 +60,6 @@ def roll_forward(
         New end-of-day state dictionary with ``Event`` set to
         ``"Valuation"``.  This dict is suitable as input to another
         ``roll_forward`` call or to an event processor.
-
-    Notes
-    -----
-    - The function never mutates *prior_eod*.
-    - Contract charge (``_cc``) is read from the internal helper key
-      set by the event processors.  It is currently always 0.0.
     """
     prior_date = to_ts(prior_eod["ValuationDate"])
     new_date = to_ts(target_date) if target_date is not None else pd.NaT
@@ -80,7 +74,6 @@ def roll_forward(
     gp_end   = to_ts(prior_eod["GuaranteePeriodEndDate"])
     ccr      = sfloat(prior_eod.get("CurrentCreditRate"))
     prior_av = sfloat(prior_eod.get("AccountValue"))
-    annual_cc    = sfloat(prior_eod.get("_cc"), 0.0)   # internal contract-charge field
     mva_column   = prior_eod.get("_mva_column")         # resolved rate-file tenor column
 
     effective_date = to_ts(prior_eod.get("EffectiveDate"))
@@ -93,16 +86,13 @@ def roll_forward(
 
     nfr = sfloat(prior_eod.get("NonforfeitureRate"))
     prior_gmav = sfloat(prior_eod.get("GuaranteedMinimumAV"), prior_av)
-    mgsv_contract_charge = sfloat(prior_eod.get("_mgsv_cc"), 0.0)
+    mgsv_contract_charge = sfloat(prior_eod.get("_mgsv_cc"))
 
     # ------------------------------------------------------------------
     # 1. Grow account value using compound interest on a 365-day basis.
     # ------------------------------------------------------------------
     growth = (1 + ccr) ** (day_count / 365) if day_count > 0 else 1.0
     av_before_charge = prior_av * growth
-
-    # 2. Subtract the daily portion of the annual contract charge.
-    new_av = av_before_charge - annual_cc * (day_count / 365)
 
     # ------------------------------------------------------------------
     # 2A. Grow guaranteed minimum account value using the
@@ -117,7 +107,7 @@ def roll_forward(
     #    earned *since* that anniversary.  On any other day, add the
     #    period interest to the running total.
     # ------------------------------------------------------------------
-    period_interest = new_av - prior_av
+    period_interest = av_before_charge - prior_av
     anniversary = safe_replace_year(issue_dt, new_date.year)
 
     if not pd.isna(anniversary) and new_date.date() == anniversary.date():
@@ -148,18 +138,17 @@ def roll_forward(
             "EffectiveDate": effective_date,
             "Term_Period": term_period,
             "AnniversaryDateNext": anniversary_next,
-            "AccountValue": new_av,
+            "AccountValue": av_before_charge,
             "GuaranteedMinimumAV": new_gmav,
             "DailyInterest": period_interest,
             "AccumulatedInterestCurrentYear": acc_int,
             # Derived snapshot fields
-            **snapshot(new_date, new_av, issue_dt, gp_end, sc_tbl),
+            **snapshot(new_date, av_before_charge, issue_dt, gp_end, sc_tbl),
             # Clear transaction fields — they do not carry forward
             "GrossWD": None,
             "Net":     None,
             "Tax":     None,
             # Internal helpers — preserve for future rolls
-            "_cc":         annual_cc,
             "_mgsv_cc":    mgsv_contract_charge,
             "_mva_column": mva_column,
         }

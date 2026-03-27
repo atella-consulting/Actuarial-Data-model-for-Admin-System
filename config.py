@@ -34,6 +34,10 @@ NONFORFEITURE    = 0.024
 PREMIUM_TAX_RATE = 0.0
 MVA_MIN_REF_RATE = 0.00
 MVA_MAX_REF_RATE = 0.10
+MGSV_BASE_PERCENTAGE = 0.875
+MGSV_CONTRACT_CHARGE = 50.0
+NONFORFEITURE_MIN = 0.0025
+NONFORFEITURE_MAX = 0.03
 
 # ---------------------------------------------------------------------------
 # MVA market-rate data settings
