@@ -231,5 +231,5 @@ STATIC_CARRY: list = [
 #   "selected" — audit only the policies listed in AUDIT_SELECTED_POLICIES
 #   "all"      — audit every policy in the run
 
-AUDIT_MODE: str = "none"
+AUDIT_MODE: str = "all"
 AUDIT_SELECTED_POLICIES: list = []   # e.g. [1, 4, 102]  — used when mode is "selected"

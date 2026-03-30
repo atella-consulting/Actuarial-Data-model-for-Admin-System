@@ -89,7 +89,7 @@ def process_withdrawal(
         else to_ts(val_state["ValuationDate"])
     )
     
-    gross_wd = sfloat(event_input.get("Gross WD"))
+    gross_wd = sfloat(event_input.get("GrossWD", "Gross WD"))
     net      = sfloat(event_input.get("Net"),  None) if nonempty(event_input.get("Net"))  else None
     tax      = sfloat(event_input.get("Tax"),  None) if nonempty(event_input.get("Tax"))  else None
 
