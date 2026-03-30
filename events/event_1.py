@@ -80,7 +80,7 @@ def process_initialization(
     if product_type not in PLAN_YEARS:
         raise ValueError(
             "ProductType must be one of: "
-            "MYGA_3, MYGA_5, MYGA_7, MYGA_10. "
+            "MYGA_03, MYGA_05, MYGA_07, MYGA_10. "
             f"Got: {product_type!r}"
         )
 
@@ -147,28 +147,22 @@ def process_initialization(
         lookup_date,
     )
 
-    gmir = to_pct(pick_first(row, "GuaranteedMinimumInterestRate"))
-    if gmir is None:
-        gmir = lookup_gmir if lookup_gmir is not None else GMIR
+    gmir = lookup_gmir if lookup_gmir is not None else GMIR
+    nonforf = lookup_nonforf if lookup_nonforf is not None else NONFORFEITURE
+    premium_tax = PREMIUM_TAX_RATE
+    current_credit_rate = lookup_ccr if lookup_ccr is not None else 0.0
 
-    nonforf = to_pct(pick_first(row, "NonforfeitureRate"))
-    if nonforf is None:
-        nonforf = lookup_nonforf if lookup_nonforf is not None else NONFORFEITURE
+    # print("DEBUG product_type:", product_type)
+    # print("DEBUG lookup_date:", lookup_date)
+    # print("DEBUG lookup_gmir:", lookup_gmir)
+    # print("DEBUG lookup_nonforf:", lookup_nonforf)
+    # print("DEBUG lookup_ccr:", lookup_ccr)
 
-    premium_tax = to_pct(pick_first(row, "PremiumTaxRate"))
-    if premium_tax is None:
-        premium_tax = PREMIUM_TAX_RATE
-
-    current_credit_rate = to_pct(pick_first(row, "CurrentCreditRate"))
-    if current_credit_rate is None:
-        current_credit_rate = lookup_ccr if lookup_ccr is not None else 0.0
-
-    mva_ref = to_pct(pick_first(row, "MVAReferenceRateAtStart"))
-    if mva_ref is None:
+    mva_ref = None
+    if rates_df is not None and not rates_df.empty:
         # This is "A" in the MVA formula — the reference rate at the beginning
         # of the current guarantee period.
-        if rates_df is not None and not rates_df.empty:
-            mva_ref = get_mva_rate(rates_df, gp_start, column=mva_column)
+        mva_ref = get_mva_rate(rates_df, gp_start, column=mva_column)
         # Raise an error if the start-date MVA reference rate cannot be found.
         if mva_ref is None:
             raise ValueError(
@@ -197,9 +191,6 @@ def process_initialization(
         acc_int,
         product_type,
         state,
-        current_credit_rate_input=pick_first(row, "CurrentCreditRate"),
-        gmir_input=pick_first(row, "GuaranteedMinimumInterestRate"),
-        nonforf_input=pick_first(row, "NonforfeitureRate"),
         lookup_ccr=lookup_ccr,
         lookup_gmir=lookup_gmir,
         lookup_nonforf=lookup_nonforf,
