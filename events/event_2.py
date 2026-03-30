@@ -40,7 +40,7 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
     The orchestrator derives Event 2's date automatically as the
     next calendar day after Event 1's valuation date.
     """
-    gross_wd = pick_first(row, "Gross WD")
+    gross_wd = pick_first(row, "Gross WD", "GrossWD")
 
     # No withdrawal at all
     if not nonempty(gross_wd):
@@ -51,8 +51,8 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
     return {
         "EventType": "PartialWithdrawal",
         "Gross WD":  gross_wd,
-        "Net":       pick_first(row, "Net"),
-        "Tax":       pick_first(row, "Tax"),
+        "Net":       None,
+        "Tax":       None,
     }
 
 
