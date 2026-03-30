@@ -5,15 +5,17 @@ Main orchestrator for the MYGA/FIA actuarial engine.
 
 Responsibility
 --------------
-  1. Prompt the user for input / output paths.
-  2. Load lookup tables (ProductTables, SurrenderCharges) from the workbook.
-  3. Read the PolicyData sheet and select the first row.
-  4. Call event_1.process_initialization → EventOutput (Event 1).
+  1. Prompt the user for input / output paths and reference tables path.
+  2. Load lookup tables (ProductTables, SurrenderCharges, MVA_Table)
+     from the reference tables workbook.
+  3. Read the PolicyData sheet from the input workbook and process all rows.
+  4. Call event_1.process_initialization -> EventOutput (Event 1).
   5. Detect whether a withdrawal event exists on the same row.
   6. If yes:
-       a. Roll the EOD state forward to the Event 2 valuation date.
-       b. Call event_2.process_withdrawal → EventOutput (Event 2).
-  7. Build the column-spec list and write the output workbook.
+       a. Roll the EOD state forward to the next valuation date.
+       b. Call event_2.process_withdrawal -> EventOutput (Event 2).
+  7. Write the production output as multiple policy rows.
+  8. Write the original transposed output only when audit mode is on.
 """
 
 from __future__ import annotations
@@ -23,7 +25,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from config import FIELDS, FIELD_DOMAIN, MVA_DATE_COLUMN, MVA_RATE_COLUMNS
+from config import (
+    FIELDS,
+    FIELD_DOMAIN,
+    MVA_DATE_COLUMN,
+    MVA_RATE_COLUMNS,
+    AUDIT_MODE,
+    AUDIT_SELECTED_POLICIES,
+)
 from models import EventOutput
 from utils import to_pct, fmt_date, fmt_output
 from valuation import roll_forward
@@ -95,7 +104,6 @@ def load_product_tables(xls: pd.ExcelFile) -> pd.DataFrame:
     df["ProductType"] = df["ProductType"].astype(str).str.strip()
     df["EffectiveDate"] = pd.to_datetime(df["EffectiveDate"], errors="coerce")
 
-    # Drop blank rows
     df = df[
         df["TableName"].ne("")
         & df["ProductType"].ne("")
@@ -132,6 +140,7 @@ def load_surrender_charges(xls: pd.ExcelFile) -> pd.DataFrame:
     df["ChargeRate"] = df["ChargeRate"].map(to_pct)
     return df
 
+
 def load_mva_rates(xls: pd.ExcelFile) -> pd.DataFrame:
     """
     Read the ``MVA_Table`` sheet and return a DataFrame indexed by MDATE.
@@ -141,58 +150,44 @@ def load_mva_rates(xls: pd.ExcelFile) -> pd.DataFrame:
 
     df = pd.read_excel(xls, sheet_name="MVA_Table", engine="openpyxl")
 
-    required_date_col = MVA_DATE_COLUMN
-    rate_cols = MVA_RATE_COLUMNS
-
-    if required_date_col not in df.columns:
+    if MVA_DATE_COLUMN not in df.columns:
         raise ValueError("MVA_Table is missing required column 'MDATE'.")
 
-    available_rate_cols = [col for col in rate_cols if col in df.columns]
+    available_rate_cols = [col for col in MVA_RATE_COLUMNS if col in df.columns]
     if not available_rate_cols:
         raise ValueError("MVA_Table does not contain any supported MVA rate columns.")
 
-    df = df[[required_date_col] + available_rate_cols].copy()
-
-    df[required_date_col] = pd.to_datetime(df[required_date_col], errors="coerce")
-    df = df[df[required_date_col].notna()].copy()
-    df = df.set_index(required_date_col).sort_index()
+    df = df[[MVA_DATE_COLUMN] + available_rate_cols].copy()
+    df[MVA_DATE_COLUMN] = pd.to_datetime(df[MVA_DATE_COLUMN], errors="coerce")
+    df = df[df[MVA_DATE_COLUMN].notna()].copy()
+    df = df.set_index(MVA_DATE_COLUMN).sort_index()
 
     for col in available_rate_cols:
         df[col] = df[col].map(to_pct)
 
     return df
 
+
 def find_policy_sheet(xls: pd.ExcelFile) -> str:
     """
-    Return the name of the sheet that contains the policy input rows.
+    Return the input policy sheet name.
 
-    Prefers a sheet named ``PolicyData``.  Falls back to the first sheet
-    that is not a lookup sheet.
-
-    Raises
-    ------
-    ValueError
-        If no usable sheet is found.
+    The input workbook is expected to contain only the PolicyData tab.
     """
-    if "PolicyData" in xls.sheet_names:
-        return "PolicyData"
-    excluded = {"ProductTables", "SurrenderCharges", "MVA_Table"}
-    candidates = [s for s in xls.sheet_names if s not in excluded]
-    if not candidates:
-        raise ValueError("No policy input sheet found in the workbook.")
-    return candidates[0]
+    if "PolicyData" not in xls.sheet_names:
+        raise ValueError("Input workbook must contain a 'PolicyData' sheet.")
+    return "PolicyData"
 
 
 # ---------------------------------------------------------------------------
-# Output writer
+# Output writers
 # ---------------------------------------------------------------------------
 
-def write_model(
+def build_model_df(
     col_specs: List[Tuple[str, Optional[Dict[str, Any]]]],
-    output_path: str,
-) -> None:
+) -> pd.DataFrame:
     """
-    Build the transposed output table and write it to Excel.
+    Build the original transposed model output table.
 
     Layout
     ------
@@ -200,19 +195,11 @@ def write_model(
     - Cols  = event/valuation blocks supplied in *col_specs*
 
     The first two columns are always ``Field`` and ``Domain``.
-
-    Parameters
-    ----------
-    col_specs :
-        List of ``(column_header, block_dict)`` pairs.
-        ``block_dict`` may be ``None`` — those cells will be blank.
-    output_path :
-        Destination ``.xlsx`` file path.
     """
     rows = []
     for field in FIELDS:
         row: Dict[str, Any] = {
-            "Field":  field,
+            "Field": field,
             "Domain": FIELD_DOMAIN.get(field, ""),
         }
         for col_name, block in col_specs:
@@ -220,7 +207,140 @@ def write_model(
             row[col_name] = fmt_output(value, field)
         rows.append(row)
 
-    pd.DataFrame(rows).to_excel(output_path, index=False, engine="openpyxl")
+    return pd.DataFrame(rows)
+
+
+def write_model(
+    col_specs: List[Tuple[str, Optional[Dict[str, Any]]]],
+    output_path: str,
+) -> None:
+    """
+    Write the original transposed model output to Excel.
+    """
+    build_model_df(col_specs).to_excel(output_path, index=False, engine="openpyxl")
+
+
+def write_production_output(
+    output_rows: List[Dict[str, Any]],
+    output_path: str,
+) -> None:
+    """
+    Write the production output as one row per policy using the standard field list.
+    """
+    rows = []
+    for state in output_rows:
+        row = {field: fmt_output(state.get(field), field) for field in FIELDS}
+        rows.append(row)
+
+    pd.DataFrame(rows, columns=FIELDS).to_excel(output_path, index=False, engine="openpyxl")
+
+
+# ---------------------------------------------------------------------------
+# Audit helpers
+# ---------------------------------------------------------------------------
+
+def should_audit_policy(
+    policy_number: Any,
+    audit_mode: str,
+    audit_selected: List[Any],
+) -> bool:
+    if audit_mode == "none":
+        return False
+    if audit_mode == "all":
+        return True
+    if audit_mode == "selected":
+        return str(policy_number) in {str(p) for p in audit_selected}
+    return False
+
+
+def derive_audit_path(output_path: str) -> str:
+    base, ext = os.path.splitext(output_path)
+    return f"{base}_audit{ext}"
+
+
+def clean_sheet_name(name: str, fallback_index: int) -> str:
+    """
+    Build a valid Excel sheet name (<= 31 chars, no invalid characters).
+    """
+    bad_chars = set(r'[]:*?/\\')
+    cleaned = "".join("_" if c in bad_chars else c for c in str(name))
+    cleaned = cleaned.strip() or f"Policy_{fallback_index}"
+    return cleaned[:31]
+
+
+# ---------------------------------------------------------------------------
+# Single-policy processor
+# ---------------------------------------------------------------------------
+
+def process_single_policy(
+    row: pd.Series,
+    product_tables: pd.DataFrame,
+    surrender_charges: pd.DataFrame,
+    rates_df: pd.DataFrame,
+) -> Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]:
+    """
+    Process one policy row and return:
+      - final EOD state for production output
+      - original transposed column specs for audit output
+    """
+    # ------------------------------------------------------------------
+    # 1. Event 1 — initialize from input row
+    # ------------------------------------------------------------------
+    event1_output: EventOutput = process_initialization(
+        row,
+        surrender_charges,
+        product_tables,
+        rates_df=rates_df,
+    )
+
+    eod1_date = fmt_date(event1_output.eod.get("ValuationDate"))
+    col_specs: List[Tuple[str, Dict[str, Any]]] = list(
+        event1_output.as_col_specs(eod1_date)
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Always roll forward to the next valuation date
+    # ------------------------------------------------------------------
+    event1_val_date = pd.to_datetime(
+        event1_output.eod.get("ValuationDate"),
+        errors="coerce",
+    )
+    if pd.isna(event1_val_date):
+        raise ValueError("Event 1 valuation date is missing.")
+
+    next_val_date = event1_val_date + pd.Timedelta(days=1)
+
+    valuation_state = roll_forward(
+        event1_output.eod,
+        surrender_charges,
+        target_date=next_val_date,
+    )
+
+    valuation_date = fmt_date(valuation_state.get("ValuationDate"))
+    col_specs.append((f"Valuation {valuation_date}", valuation_state))
+
+    # Default production output = next-day valuation state
+    final_eod = valuation_state
+
+    # ------------------------------------------------------------------
+    # 3. Event 2 — PartialWithdrawal (optional, on next_val_date)
+    # ------------------------------------------------------------------
+    event2_input = extract_event2_input(row)
+    if event2_input is not None:
+        event2_input["Valuation Date"] = next_val_date
+
+        event2_output: EventOutput = process_withdrawal(
+            valuation_state,
+            event2_input,
+            surrender_charges,
+            rates_df=rates_df,
+        )
+        eod2_date = fmt_date(event2_output.eod.get("ValuationDate"))
+        col_specs.extend(event2_output.as_col_specs(eod2_date))
+
+        final_eod = event2_output.eod
+
+    return final_eod, col_specs
 
 
 # ---------------------------------------------------------------------------
@@ -229,79 +349,54 @@ def write_model(
 
 def main() -> None:
     """
-    Entry point — read inputs, run events, write output.
+    Entry point — read inputs, run all policies, write outputs.
     """
-    # 1. Resolve file paths
-    input_path  = prompt_path("Enter input Excel file",  "policy_input.xlsx")
-    output_path = prompt_path("Enter output Excel file", "policy_model_output.xlsx")
+    input_path = prompt_path("Enter input Excel file", "policy_input.xlsx")
+    reference_path = prompt_path("Enter reference tables Excel file", "reference_tables.xlsx")
+    output_path = prompt_path("Enter output Excel file", "policy_output.xlsx")
 
-    # 2. Open workbook and load lookup tables
-    xls = pd.ExcelFile(input_path, engine="openpyxl")
-    product_tables    = load_product_tables(xls)
-    surrender_charges = load_surrender_charges(xls)
-    rates_df          = load_mva_rates(xls)
+    input_xls = pd.ExcelFile(input_path, engine="openpyxl")
+    reference_xls = pd.ExcelFile(reference_path, engine="openpyxl")
 
-    # 3. Read the PolicyData sheet
-    policy_sheet = find_policy_sheet(xls)
-    policy_df = pd.read_excel(xls, sheet_name=policy_sheet, engine="openpyxl")
+    product_tables = load_product_tables(reference_xls)
+    surrender_charges = load_surrender_charges(reference_xls)
+    rates_df = load_mva_rates(reference_xls)
+
+    policy_sheet = find_policy_sheet(input_xls)
+    policy_df = pd.read_excel(input_xls, sheet_name=policy_sheet, engine="openpyxl")
     if policy_df.empty:
         raise ValueError(f"'{policy_sheet}' sheet is empty.")
 
-    # For now, process only the first policy row.
-    init_row = policy_df.iloc[0]
+    production_rows: List[Dict[str, Any]] = []
+    audit_specs: List[Tuple[Any, List[Tuple[str, Dict[str, Any]]]]] = []
 
-    # ------------------------------------------------------------------
-    # 4. Event 1 — PolicyIssue
-    # ------------------------------------------------------------------
-    event1_output: EventOutput = process_initialization(
-        init_row, surrender_charges, product_tables, rates_df=rates_df
-    )
-
-    eod1_date = fmt_date(event1_output.eod.get("ValuationDate"))
-
-    # Build initial column spec from EventOutput's helper method
-    col_specs: List[Tuple[str, Dict[str, Any]]] = list(
-        event1_output.as_col_specs(eod1_date)
-    )
-
-    # ------------------------------------------------------------------
-    # 5. Event 2 — PartialWithdrawal (optional)
-    # ------------------------------------------------------------------
-    event2_input = extract_event2_input(init_row)
-
-    if event2_input is not None:
-        event1_val_date = pd.to_datetime(event1_output.eod.get("ValuationDate"), errors="coerce")
-        if pd.isna(event1_val_date):
-            raise ValueError("Event 1 valuation date is missing; cannot derive Event 2 valuation date.")
-
-        # New rule:
-        # only one valuation date is read from input;
-        # Event 2 always uses the next calendar day.
-        event2_val_date = event1_val_date + pd.Timedelta(days=1)
-
-        # 5a. Roll forward to the derived Event 2 valuation date
-        valuation_state = roll_forward(
-            event1_output.eod,
+    for _, row in policy_df.iterrows():
+        final_eod, col_specs = process_single_policy(
+            row,
+            product_tables,
             surrender_charges,
-            target_date=event2_val_date,
+            rates_df,
         )
-        valuation_date = fmt_date(valuation_state.get("ValuationDate"))
-        col_specs.append((f"Valuation {valuation_date}", valuation_state))
+        production_rows.append(final_eod)
 
-        # 5b. Apply the withdrawal on that same derived date
-        event2_input["Valuation Date"] = event2_val_date
+        policy_number = final_eod.get("PolicyNumber")
+        if should_audit_policy(policy_number, AUDIT_MODE, AUDIT_SELECTED_POLICIES):
+            audit_specs.append((policy_number, col_specs))
 
-        event2_output: EventOutput = process_withdrawal(
-            valuation_state, event2_input, surrender_charges, rates_df=rates_df
-        )
-        eod2_date = fmt_date(event2_output.eod.get("ValuationDate"))
-        col_specs.extend(event2_output.as_col_specs(eod2_date))
+    write_production_output(production_rows, output_path)
+    print(f"Done. Production output saved to: {output_path}")
 
-    # ------------------------------------------------------------------
-    # 6. Write output
-    # ------------------------------------------------------------------
-    write_model(col_specs, output_path)
-    print(f"Done. Output saved to: {output_path}")
+    if AUDIT_MODE != "none" and audit_specs:
+        audit_path = derive_audit_path(output_path)
+        with pd.ExcelWriter(audit_path, engine="openpyxl") as writer:
+            for i, (policy_number, col_specs) in enumerate(audit_specs, start=1):
+                sheet_name = clean_sheet_name(f"Policy_{policy_number}", i)
+                build_model_df(col_specs).to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    index=False,
+                )
+        print(f"Audit output saved to: {audit_path}")
 
 
 if __name__ == "__main__":
