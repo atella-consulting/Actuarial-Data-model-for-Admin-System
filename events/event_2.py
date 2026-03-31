@@ -50,7 +50,7 @@ def extract_event2_input(row: "pd.Series") -> Optional[Dict[str, Any]]:
 
     return {
         "EventType": "PartialWithdrawal",
-        "Gross WD":  gross_wd,
+        "GrossWD":  gross_wd,
         "Net":       None,
         "Tax":       None,
     }
