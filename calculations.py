@@ -48,13 +48,9 @@ def get_mva_rate(
     date: Any,
     column: Optional[str] = None,
 ) -> Optional[float]:
-    """
-    Return the MVA reference rate (decimal) for *date* from *rates_df*.
-    """
     if rates_df is None or rates_df.empty:
         return None
-    
-    #  Return None if the requested column is unavailable.
+
     if column is None or column not in rates_df.columns:
         return None
     col = column
@@ -63,11 +59,17 @@ def get_mva_rate(
     if pd.isna(ts):
         return None
 
-    # Try the requested date first, then roll back up to 2 days to handle weekend gaps.
     for offset in range(0, 3):
         candidate = ts - pd.Timedelta(days=offset)
         if candidate in rates_df.index:
             val = rates_df.at[candidate, col]
+
+            if isinstance(val, pd.Series):
+                val = val.dropna()
+                if val.empty:
+                    continue
+                return float(val.iloc[0])
+
             if pd.notna(val):
                 return float(val)
 

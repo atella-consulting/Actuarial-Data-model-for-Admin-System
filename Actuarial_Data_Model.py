@@ -329,6 +329,27 @@ def process_single_policy(
     if event2_input is not None:
         event2_input["Valuation Date"] = next_val_date
 
+        # # --- TEMP DEBUG START ---
+        # prior_day = pd.to_datetime(next_val_date) - pd.Timedelta(days=1)
+        # print("\n[MVA DEBUG] ------------------------------")
+        # print("[MVA DEBUG] PolicyNumber:", valuation_state.get("PolicyNumber"))
+        # print("[MVA DEBUG] Valuation Date:", next_val_date)
+        # print("[MVA DEBUG] Prior day:", prior_day)
+        # print("[MVA DEBUG] GrossWD input:", event2_input.get("GrossWD"))
+        # print("[MVA DEBUG] PFWB before WD:", valuation_state.get("PenaltyFreeWithdrawalBalance"))
+        # print("[MVA DEBUG] GP Start:", valuation_state.get("GuaranteePeriodStartDate"))
+        # print("[MVA DEBUG] GP End:", valuation_state.get("GuaranteePeriodEndDate"))
+        # print("[MVA DEBUG] MVA start rate A:", valuation_state.get("MVAReferenceRateAtStart"))
+        # print("[MVA DEBUG] rates_df empty?:", rates_df.empty)
+
+        # if not rates_df.empty:
+        #     for d in [prior_day, prior_day - pd.Timedelta(days=1), prior_day - pd.Timedelta(days=2)]:
+        #         print(f"[MVA DEBUG] date {d} in rates_df.index? ->", d in rates_df.index)
+        #         if d in rates_df.index:
+        #             print("[MVA DEBUG] row values:")
+        #             print(rates_df.loc[d])
+        # # --- TEMP DEBUG END ---
+
         event2_output: EventOutput = process_withdrawal(
             valuation_state,
             event2_input,
