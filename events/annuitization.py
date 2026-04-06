@@ -216,8 +216,8 @@ def process_annuitization(
             eod=merge_state(base=base_state),
         )
 
-    purchase_rate_per_1000 = pv * 1000.0
-    modal_benefit = (single_premium / pv) if pv else None
+    purchase_rate_per_1000 = 1000.0/pv
+    modal_benefit = purchase_rate_per_1000 * 100
 
     data = {
         "ValuationDate": base_state.get("ValuationDate"),
