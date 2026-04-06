@@ -40,6 +40,13 @@ NONFORFEITURE_MIN = 0.0025
 NONFORFEITURE_MAX = 0.03
 
 # ---------------------------------------------------------------------------
+# Annuitization table settings
+# ---------------------------------------------------------------------------
+ANNUITY_CSV_FOLDER = "CSV_Files"
+ANNUITY_MORTALITY_TABLE = "2012_Period_Table_IAM2012.csv"
+ANNUITY_PROJECTION_TABLE = "Projection_Scale_G2.csv"
+
+# ---------------------------------------------------------------------------
 # MVA market-rate data settings
 # ---------------------------------------------------------------------------
 # Number of calendar days at the *start* of each guarantee period during
@@ -130,6 +137,9 @@ FIELDS: list = [
     "GrossWD",
     "Net",
     "Tax",
+    "PV Expected Benefits",
+    "Purchase Rate per $1,000",
+    "Modal Benefit @ Issue",
 ]
 
 # ---------------------------------------------------------------------------
@@ -174,6 +184,9 @@ FIELD_DOMAIN: dict = {
     "GrossWD":                         "Transaction",
     "Net":                             "Transaction",
     "Tax":                             "Transaction",
+    "PV Expected Benefits":            "Annuitization",
+    "Purchase Rate per $1,000":        "Annuitization",
+    "Modal Benefit @ Issue":           "Annuitization",
 }
 
 # ---------------------------------------------------------------------------
@@ -231,5 +244,13 @@ STATIC_CARRY: list = [
 #   "selected" — audit only the policies listed in AUDIT_SELECTED_POLICIES
 #   "all"      — audit every policy in the run
 
-AUDIT_MODE: str = "all"
+AUDIT_MODE: str = "none"
 AUDIT_SELECTED_POLICIES: list = []   # e.g. [1, 4, 102]  — used when mode is "selected"
+
+# ---------------------------------------------------------------------------
+# Optional annuitization add-on
+# ---------------------------------------------------------------------------
+# off = run existing daily flow only
+# on  = run existing daily flow, then append annuitization calculation
+
+ANNUITIZATION_SWITCH: str = "on"

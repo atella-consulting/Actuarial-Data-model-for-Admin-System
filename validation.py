@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from config import TODAY, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE, PLAN_YEARS, ALLOWED_STATES
+from config import TODAY, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE, PLAN_YEARS, ALLOWED_STATES, NONFORFEITURE_MIN, NONFORFEITURE_MAX
 from models import ValidationResult
 from utils import sfloat, nonempty, to_ts
 
@@ -41,9 +41,6 @@ def validate_initialization(
     product_type: Optional[str] = None,
     state: Optional[str] = None,
     *,
-    current_credit_rate_input: Any = None,
-    gmir_input: Any = None,
-    nonforf_input: Any = None,
     lookup_ccr: Optional[float] = None,
     lookup_gmir: Optional[float] = None,
     lookup_nonforf: Optional[float] = None,
@@ -89,7 +86,7 @@ def validate_initialization(
         )
 
     # --- AccumulatedInterestCurrentYear ---
-    if AccumulatedInterestCurrentYear is not None:
+    if AccumulatedInterestCurrentYear is not None and AccumulatedInterestCurrentYear != 0.0:
         if AccumulatedInterestCurrentYear < 10_000 or AccumulatedInterestCurrentYear > 1_000_000:
             result.add_warning(
                 "AccumulatedInterestCurrentYear",
@@ -100,7 +97,15 @@ def validate_initialization(
     if product_type not in PLAN_YEARS:
         result.add_error(
             "ProductType",
-            "ProductType must be one of: MYGA_3, MYGA_5, MYGA_7, MYGA_10"
+            "ProductType must be one of: MYGA_03, MYGA_05, MYGA_07, MYGA_10"
+        )
+
+    # --- NonforfeitureRate ---
+    if lookup_nonforf is not None and not (NONFORFEITURE_MIN <= lookup_nonforf <= NONFORFEITURE_MAX):
+        result.add_warning(
+            "NonforfeitureRate",
+            f"NonforfeitureRate ({lookup_nonforf:.6f}) outside configured range "
+            f"[{NONFORFEITURE_MIN:.6f} ; {NONFORFEITURE_MAX:.6f}]"
         )
 
     # --- State ---

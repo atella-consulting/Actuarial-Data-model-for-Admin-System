@@ -181,7 +181,7 @@ def process_initialization(
     # ------------------------------------------------------------------
     # 8. Validation
     # ------------------------------------------------------------------
-    issue_age_raw = pick_first(row, "IssueAge")
+    issue_age_raw = pick_first(row, "Primary_IssueAge", "IssueAge")
     issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
 
     result: ValidationResult = validate_initialization(
@@ -211,7 +211,7 @@ def process_initialization(
         "IssueDate":                       issue_dt,
         "ProductType":                     pick_first(row, "ProductType"),
         "PlanCode":                        pick_first(row, "PlanCode"),
-        "IssueAge":                        pick_first(row, "IssueAge"),
+        "IssueAge":                        issue_age_raw,
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,

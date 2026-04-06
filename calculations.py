@@ -305,7 +305,7 @@ def snapshot(
     year_num = policy_year(issue_dt, val_date)
     rate = sc_rate(sc_tbl, year_num)
     surrender_charge = av * rate
-    mva = 0.0  # MVA formula is a future extension
+    mva = 0.0  # MVA is applied separately in event processors; snapshot provides the base CSV only
     csv = av + mva - surrender_charge
     rem_months = month_diff(val_date, gp_end)
     return {
@@ -347,6 +347,8 @@ def maturity_date_from_issue_and_annuitant(
     -----
     The returned date is always a policy anniversary (same month and day
     as ``issue_dt``) because annuity contracts mature on their anniversary.
+    For joint-life products, this function still uses the primary annuitant
+    date of birth only; that assumption is a product / business-rule choice.
     """
     issue_dt = to_ts(issue_dt)
     annuitant_dob = to_ts(annuitant_dob)

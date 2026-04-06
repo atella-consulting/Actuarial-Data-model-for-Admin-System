@@ -32,12 +32,14 @@ from config import (
     MVA_RATE_COLUMNS,
     AUDIT_MODE,
     AUDIT_SELECTED_POLICIES,
+    ANNUITIZATION_SWITCH,
 )
 from models import EventOutput
 from utils import to_pct, fmt_date, fmt_output
 from valuation import roll_forward
 from events.event_1 import process_initialization
 from events.event_2 import extract_event2_input, process_withdrawal
+from events.annuitization import AnnuityEngine, process_annuitization
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +53,29 @@ def prompt_path(prompt: str, default: str) -> str:
     """
     p = input(f"{prompt} [Default: {default}]: ").strip()
     return os.path.abspath((p or default).strip('"').strip("'"))
+
+
+def append_annuitization_to_policy(
+    row: pd.Series,
+    base_eod: Dict[str, Any],
+    col_specs: List[Tuple[str, Dict[str, Any]]],
+    annuity_engine: AnnuityEngine,
+) -> Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]:
+    """
+    Run the stand-alone annuitization calculation on top of the existing
+    daily policy result and append the Event 4 blocks to the audit layout.
+    """
+    ann_output: EventOutput = process_annuitization(
+        row=row,
+        base_state=base_eod,
+        engine=annuity_engine,
+    )
+
+    ann_date = fmt_date(ann_output.eod.get("ValuationDate"))
+    new_col_specs = list(col_specs)
+    new_col_specs.extend(ann_output.as_col_specs(ann_date))
+
+    return ann_output.eod, new_col_specs
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +413,8 @@ def main() -> None:
     if policy_df.empty:
         raise ValueError(f"'{policy_sheet}' sheet is empty.")
 
+    annuity_engine = AnnuityEngine(reference_xls) if ANNUITIZATION_SWITCH == "on" else None
+
     production_rows: List[Dict[str, Any]] = []
     audit_specs: List[Tuple[Any, List[Tuple[str, Dict[str, Any]]]]] = []
 
@@ -398,6 +425,15 @@ def main() -> None:
             surrender_charges,
             rates_df,
         )
+
+        if ANNUITIZATION_SWITCH == "on":
+            final_eod, col_specs = append_annuitization_to_policy(
+                row=row,
+                base_eod=final_eod,
+                col_specs=col_specs,
+                annuity_engine=annuity_engine,
+            )
+
         production_rows.append(final_eod)
 
         policy_number = final_eod.get("PolicyNumber")
