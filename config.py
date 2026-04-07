@@ -109,7 +109,14 @@ FIELDS: list = [
     "AnniversaryDateNext",
     "ProductType",
     "PlanCode",
-    "IssueAge",
+
+    "Primary_IssueAge",
+    "Primary_Sex",
+    "Secondary_IssueAge",
+    "Secondary_Sex",
+    "TermCertain",
+    "AnnuityType",
+
     "State",
     "SinglePremium",
     "SelectedRiders",
@@ -156,7 +163,14 @@ FIELD_DOMAIN: dict = {
     "AnniversaryDateNext":             "Date",
     "ProductType":                     "Product",
     "PlanCode":                        "Product",
-    "IssueAge":                        "Identity",
+
+    "Primary_IssueAge":               "Identity",
+    "Primary_Sex":                    "Identity",
+    "Secondary_IssueAge":             "Identity",
+    "Secondary_Sex":                  "Identity",
+    "TermCertain":                    "Annuitization",
+    "AnnuityType":                    "Annuitization",
+
     "State":                           "Identity",
     "SinglePremium":                   "Policy",
     "SelectedRiders":                  "Policy",
@@ -216,7 +230,6 @@ STATIC_CARRY: list = [
     "EffectiveDate",
     "ProductType",
     "PlanCode",
-    "IssueAge",
     "State",
     "SinglePremium",
     "SelectedRiders",
@@ -233,6 +246,12 @@ STATIC_CARRY: list = [
     "MVAReferenceRateAtStart",
     "AccumulatedInterestCurrentYear",
     "PenaltyFreeWithdrawalBalance",
+    "Primary_Sex",
+    "Secondary_Sex",
+    "TermCertain",
+    "AnnuityType",
+    "Primary_IssueAge",
+    "Secondary_IssueAge",
 ]
 
 # ---------------------------------------------------------------------------

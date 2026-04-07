@@ -44,7 +44,6 @@ class Policy:
     ProductType: Optional[str] = None
     Term_Period: Optional[int] = None
     PlanCode: Optional[str] = None
-    IssueAge: Optional[float] = None
     State: Optional[str] = None
     SinglePremium: float = 0.0
     SelectedRiders: Optional[str] = None
@@ -55,6 +54,14 @@ class Policy:
     MaturityDate: Optional[pd.Timestamp] = None
     GuaranteePeriodStartDate: Optional[pd.Timestamp] = None
     GuaranteePeriodEndDate: Optional[pd.Timestamp] = None
+
+    # Annuituization-specific fields
+    Primary_IssueAge: Optional[float] = None
+    Primary_Sex: Optional[str] = None
+    Secondary_IssueAge: Optional[float] = None
+    Secondary_Sex: Optional[str] = None
+    TermCertain: Optional[int] = None
+    AnnuityType: Optional[str] = None
 
     # Rates (stored as decimals, e.g. 0.0575 for 5.75 %)
     GuaranteedMinimumInterestRate: Optional[float] = None

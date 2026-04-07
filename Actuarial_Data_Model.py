@@ -60,6 +60,7 @@ def append_annuitization_to_policy(
     base_eod: Dict[str, Any],
     col_specs: List[Tuple[str, Dict[str, Any]]],
     annuity_engine: AnnuityEngine,
+    product_tables: pd.DataFrame,
 ) -> Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]:
     """
     Run the stand-alone annuitization calculation on top of the existing
@@ -69,6 +70,7 @@ def append_annuitization_to_policy(
         row=row,
         base_state=base_eod,
         engine=annuity_engine,
+        product_tables=product_tables,
     )
 
     ann_date = fmt_date(ann_output.eod.get("ValuationDate"))
@@ -432,6 +434,7 @@ def main() -> None:
                 base_eod=final_eod,
                 col_specs=col_specs,
                 annuity_engine=annuity_engine,
+                product_tables=product_tables,
             )
 
         production_rows.append(final_eod)

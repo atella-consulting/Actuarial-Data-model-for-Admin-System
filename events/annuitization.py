@@ -1,14 +1,13 @@
 # annuitization.py
 from __future__ import annotations
 
-import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import pandas as pd
 
-from config import ANNUITIZATION_SWITCH
 from models import EventOutput, ValidationResult
-from utils import pick_first, sfloat, nonempty, to_pct, merge_state
+from utils import pick_first, sfloat, nonempty, merge_state
+from calculations import lookup_product_table_rate
 
 
 class AnnuityEngine:
@@ -151,29 +150,54 @@ def process_annuitization(
     row: pd.Series,
     base_state: Dict[str, Any],
     engine: AnnuityEngine,
+    product_tables: pd.DataFrame,
 ) -> EventOutput:
     result = ValidationResult()
 
-    annuity_type = str(pick_first(row, "AnnuityType") or "").strip().lower()
+    annuity_type_raw = pick_first(row, "AnnuityType")
+    annuity_type = str(annuity_type_raw or "").strip().lower()
+
     primary_age_raw = pick_first(row, "Primary_IssueAge", "IssueAge")
     primary_sex = pick_first(row, "Primary_Sex")
+
     secondary_age_raw = pick_first(row, "Secondary_IssueAge")
     secondary_sex = pick_first(row, "Secondary_Sex")
+
     term_raw = pick_first(row, "TermCertain")
-    rate_raw = base_state.get("CurrentCreditRate")
-    single_premium = sfloat(pick_first(row, "SinglePremium"))
 
     primary_age = int(sfloat(primary_age_raw, -1))
     secondary_age = int(sfloat(secondary_age_raw, -1)) if nonempty(secondary_age_raw) else None
     term = int(sfloat(term_raw, -1)) if nonempty(term_raw) else None
 
-    rate_dec = to_pct(rate_raw)
-    interest_pct = rate_dec * 100.0 if rate_dec is not None else None
+    annuity_input_fields = {
+        "ValuationDate": base_state.get("ValuationDate"),
+        "Event": "Annuitization",
+        "Primary_IssueAge": primary_age_raw,
+        "Primary_Sex": primary_sex,
+        "Secondary_IssueAge": secondary_age_raw,
+        "Secondary_Sex": secondary_sex,
+        "TermCertain": term_raw,
+        "AnnuityType": annuity_type_raw,
+    }
+
+    annuity_rate_dec = lookup_product_table_rate(
+        product_tables=product_tables,
+        table_name="AnnuityRate",
+        product_type=base_state.get("ProductType"),
+        valuation_date=base_state.get("ValuationDate"),
+    )
+    interest_pct = annuity_rate_dec * 100.0 if annuity_rate_dec is not None else None
 
     if not annuity_type:
         result.add_error("AnnuityType", "AnnuityType is required")
+
     if interest_pct is None:
-        result.add_error("AnnuityDiscountRate", "Annuity discount rate is required")
+        result.add_error(
+            "AnnuityRate",
+            "No ProductTables match found for AnnuityRate / "
+            f"{base_state.get('ProductType')} / <= {base_state.get('ValuationDate')}"
+        )
+
     if not nonempty(primary_sex) or primary_age < 0:
         result.add_error("PrimaryAnnuitant", "Primary_Sex and Primary_IssueAge are required")
 
@@ -188,10 +212,10 @@ def process_annuitization(
     if result.has_errors():
         return EventOutput(
             event_type="Annuitization",
-            data={},
+            data=annuity_input_fields,
             calc={},
             validation=result,
-            eod=merge_state(base=base_state),
+            eod=merge_state(annuity_input_fields, base=base_state),
         )
 
     p_sex, p_age = engine._set_annuitant(str(primary_sex), primary_age)
@@ -210,18 +234,17 @@ def process_annuitization(
         result.add_error("AnnuityType", f"Unsupported AnnuityType: {annuity_type}")
         return EventOutput(
             event_type="Annuitization",
-            data={},
+            data=annuity_input_fields,
             calc={},
             validation=result,
-            eod=merge_state(base=base_state),
+            eod=merge_state(annuity_input_fields, base=base_state),
         )
 
-    purchase_rate_per_1000 = 1000.0/pv
+    purchase_rate_per_1000 = 1000.0 / pv
     modal_benefit = purchase_rate_per_1000 * 100
 
     data = {
-        "ValuationDate": base_state.get("ValuationDate"),
-        "Event": "Annuitization",
+        **annuity_input_fields,
         "PV Expected Benefits": pv,
     }
 
@@ -231,7 +254,7 @@ def process_annuitization(
         "Modal Benefit @ Issue": modal_benefit,
         "_annuity_duration": dur,
         "_annuity_type": annuity_type,
-        "_annuity_interest_rate": rate_dec,
+        "_annuity_interest_rate": annuity_rate_dec,
     }
 
     eod = merge_state(data, calc, base=base_state)
