@@ -255,6 +255,7 @@ def process_initialization(
         "AnnuitantDOB":                    annuitant,
         "OwnerDOB":                        owner_dob,
         "AccountValue":                    account_value,
+        "PriorYearEndAccountValue":        pick_first(row, "PriorYearEndAccountValue"),
         "AccumulatedInterestCurrentYear":  acc_int,
         "PenaltyFreeWithdrawalBalance":    pfwb,
         "RMD":                             rmd,
