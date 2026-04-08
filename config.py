@@ -136,6 +136,7 @@ FIELDS: list = [
     "PenaltyFreeWithdrawalBalance",
     "RemainingMonthsInGuaranteePeriod",
     "AccountValue",
+    "RMD",
     "SurrenderChargeRate",
     "SurrenderCharge",
     "MVA",
@@ -190,6 +191,7 @@ FIELD_DOMAIN: dict = {
     "PenaltyFreeWithdrawalBalance":    "Balance",
     "RemainingMonthsInGuaranteePeriod": "Term",
     "AccountValue":                    "Balance",
+    "RMD":                             "Balance",
     "SurrenderChargeRate":             "Rate",
     "SurrenderCharge":                 "Balance",
     "MVA":                             "Balance",
@@ -252,6 +254,10 @@ STATIC_CARRY: list = [
     "AnnuityType",
     "Primary_IssueAge",
     "Secondary_IssueAge",
+    "RMD",
+    "PV Expected Benefits",
+    "Purchase Rate per $1,000",
+    "Modal Benefit @ Issue",
 ]
 
 # ---------------------------------------------------------------------------

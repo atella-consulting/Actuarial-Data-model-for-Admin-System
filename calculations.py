@@ -162,6 +162,97 @@ def compute_mva(
 
 
 # ---------------------------------------------------------------------------
+# Required Minimum Distribution (RMD)
+# ---------------------------------------------------------------------------
+def required_rmd_start_age(owner_dob: Any) -> Optional[float]:
+    """Return the statutory starting age for lifetime RMDs by birth cohort."""
+    dob = to_ts(owner_dob)
+    if pd.isna(dob):
+        return None
+    if dob.year < 1951:
+        return 70.5
+    if 1951 <= dob.year <= 1959:
+        return 73.0
+    return 75.0
+
+
+def attained_age(owner_dob: Any, as_of_date: Any) -> Optional[int]:
+    """Return age on last birthday as of *as_of_date*."""
+    dob = to_ts(owner_dob)
+    as_of = to_ts(as_of_date)
+    if pd.isna(dob) or pd.isna(as_of):
+        return None
+    return int(as_of.year - dob.year - ((as_of.month, as_of.day) < (dob.month, dob.day)))
+
+
+def calculate_issue_age(annuitant_dob: Any, issue_date: Any) -> Optional[int]:
+    """Return issue age (age on last birthday as of issue date)."""
+    return attained_age(annuitant_dob, issue_date)
+
+
+def calculate_rmd(
+    owner_dob: Any,
+    valuation_date: Any,
+    prior_year_end_balance: Any,
+    rmd_qualified: Any,
+    rmd_table: Optional[pd.DataFrame],
+) -> float:
+    """
+    Calculate RMD using the IRS distribution-period table.
+
+    Rules implemented:
+      - If RMD_Qualified is not ``"Y"``, return ``0.0`` immediately.
+      - If the owner is below the required start age, use the earliest eligible
+        age supported by the supplied table.
+      - Otherwise use next year's age.
+      - Numerator is the balance as of December 31 of the previous year.
+    """
+    qual = str(rmd_qualified).strip().upper() if rmd_qualified is not None else ""
+    if qual != "Y":
+        return 0.0
+
+    balance = sfloat(prior_year_end_balance, None)
+    if balance is None:
+        raise ValueError("PriorYearEndAccountValue is required when RMD_Qualified = 'Y'.")
+
+    if rmd_table is None or rmd_table.empty:
+        raise ValueError("RMD table is required when RMD_Qualified = 'Y'.")
+    if "Age" not in rmd_table.columns or "Distribution Period" not in rmd_table.columns:
+        raise ValueError("RMD table must contain 'Age' and 'Distribution Period' columns.")
+
+    start_age = required_rmd_start_age(owner_dob)
+    current_age = attained_age(owner_dob, valuation_date)
+    if start_age is None or current_age is None:
+        raise ValueError("OwnerDOB and ValuationDate are required when RMD_Qualified = 'Y'.")
+
+    table = rmd_table[["Age", "Distribution Period"]].copy()
+    table["Age"] = pd.to_numeric(table["Age"], errors="coerce")
+    table["Distribution Period"] = pd.to_numeric(table["Distribution Period"], errors="coerce")
+    table = table.dropna(subset=["Age", "Distribution Period"]).sort_values("Age")
+    if table.empty:
+        raise ValueError("RMD table does not contain any usable rows.")
+
+    table_min_age = int(table["Age"].iloc[0])
+    table_max_age = int(table["Age"].iloc[-1])
+
+    if current_age < start_age:
+        lookup_age = max(table_min_age, int(start_age if float(start_age).is_integer() else int(start_age) + 1))
+    else:
+        lookup_age = current_age + 1
+
+    lookup_age = min(max(lookup_age, table_min_age), table_max_age)
+
+    row = table.loc[table["Age"] == lookup_age, "Distribution Period"]
+    if row.empty:
+        raise ValueError(f"No RMD distribution period found for age {lookup_age}.")
+
+    factor = float(row.iloc[0])
+    if factor <= 0:
+        raise ValueError(f"Invalid RMD distribution period for age {lookup_age}: {factor}.")
+
+    return balance / factor
+
+# ---------------------------------------------------------------------------
 # Policy year
 # ---------------------------------------------------------------------------
 
@@ -231,39 +322,6 @@ def month_diff(start: Any, end: Any) -> int:
     if end.day < start.day:
         months -= 1
     return max(months, 0)
-
-
-# ---------------------------------------------------------------------------
-# Annuitant age helpers
-# ---------------------------------------------------------------------------
-
-def age_last_birthday(dob: Any, as_of_date: Any) -> Optional[int]:
-    """
-    Return integer age on the last birthday as of *as_of_date*.
-
-    Returns ``None`` when either date is missing or unparseable.
-    """
-    dob_ts = to_ts(dob)
-    as_of_ts = to_ts(as_of_date)
-    if pd.isna(dob_ts) or pd.isna(as_of_ts):
-        return None
-
-    age = as_of_ts.year - dob_ts.year
-    if (as_of_ts.month, as_of_ts.day) < (dob_ts.month, dob_ts.day):
-        age -= 1
-    return max(int(age), 0)
-
-
-def issue_age_from_annuitant_dob(annuitant_dob: Any, issue_dt: Any) -> Optional[int]:
-    """
-    Derive issue age from the annuitant DOB and the policy issue date.
-
-    Business rule:
-      - use only the matching annuitant DOB
-      - do not fall back to owner DOB
-      - return ``None`` when the DOB or issue date is missing/invalid
-    """
-    return age_last_birthday(annuitant_dob, issue_dt)
 
 
 # ---------------------------------------------------------------------------

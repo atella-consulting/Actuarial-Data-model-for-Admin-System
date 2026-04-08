@@ -41,7 +41,8 @@ from calculations import (
     resolve_mva_column,
     get_mva_rate,
     lookup_product_table_rate,
-    issue_age_from_annuitant_dob,
+    calculate_rmd,
+    calculate_issue_age,
 )
 from validation import validate_initialization
 
@@ -51,6 +52,7 @@ def process_initialization(
     sc_tbl: Optional[pd.DataFrame],
     product_tables: pd.DataFrame,
     rates_df: Optional[pd.DataFrame] = None,
+    rmd_table: Optional[pd.DataFrame] = None,
 ) -> EventOutput:
     """
     Process Event 1 — PolicyIssue.
@@ -65,13 +67,19 @@ def process_initialization(
     issue_dt     = to_ts(pick_first(row, "IssueDate"))
     val_date     = to_ts(pick_first(row, "Valuation Date", "ValuationDate"))
     annuitant    = to_ts(pick_first(row, "AnnuitantDOB"))
-    owner_dob    = to_ts(pick_first(row, "OwnerDOB"))
     secondary_annuitant = to_ts(pick_first(row, "Secondary_AnnuitantDOB"))
+    owner_dob    = to_ts(pick_first(row, "OwnerDOB"))
     premium      = sfloat(pick_first(row, "SinglePremium"))
     product_type = as_code(pick_first(row, "ProductType"))
     plan_code    = as_code(pick_first(row, "PlanCode"))
     state_raw    = pick_first(row, "State")
     state = str(state_raw).strip().upper() if nonempty(state_raw) else None
+    rmd_qualified = pick_first(row, "RMD_Qualified", "RMD_qualified")
+
+    primary_sex = pick_first(row, "Primary_Sex")
+    secondary_sex = pick_first(row, "Secondary_Sex")
+    term_certain_raw = pick_first(row, "TermCertain")
+    annuity_type_raw = pick_first(row, "AnnuityType")
 
     if pd.isna(val_date):
         val_date = issue_dt
@@ -179,14 +187,27 @@ def process_initialization(
     guaranteed_minimum_av = sfloat(pick_first(row, "GuaranteedMinimumAV"), account_value)
     acc_int       = sfloat(pick_first(row, "AccumulatedInterestCurrentYear"), 0.0)
     pfwb          = sfloat(pick_first(row, "PenaltyFreeWithdrawalBalance"), 0.0)
+    prior_year_end_balance_raw = pick_first(
+        row,
+        "PriorYearEndAccountValue",
+        "RMD_PriorYearEndBalance",
+        "AccountValueAsOfPriorDec31",
+    )
 
-    primary_issue_age = issue_age_from_annuitant_dob(annuitant, issue_dt)
-    secondary_issue_age = issue_age_from_annuitant_dob(secondary_annuitant, issue_dt)
+    primary_issue_age = calculate_issue_age(annuitant, issue_dt)
+    secondary_issue_age = calculate_issue_age(secondary_annuitant, issue_dt)
+    term_certain = int(sfloat(term_certain_raw, -1)) if nonempty(term_certain_raw) else None
 
-    primary_sex = pick_first(row, "Primary_Sex")
-    secondary_sex = pick_first(row, "Secondary_Sex")
-    term_certain = pick_first(row, "TermCertain")
-    annuity_type = pick_first(row, "AnnuityType")
+    try:
+        rmd = calculate_rmd(
+            owner_dob=owner_dob,
+            valuation_date=val_date,
+            prior_year_end_balance=prior_year_end_balance_raw,
+            rmd_qualified=rmd_qualified,
+            rmd_table=rmd_table,
+        )
+    except ValueError:
+        rmd = None
 
     # ------------------------------------------------------------------
     # 8. Validation
@@ -202,6 +223,10 @@ def process_initialization(
         lookup_gmir=lookup_gmir,
         lookup_nonforf=lookup_nonforf,
         lookup_date=lookup_date,
+        rmd_qualified=rmd_qualified,
+        owner_dob=owner_dob,
+        rmd_value=rmd,
+        rmd_prior_year_end_balance=prior_year_end_balance_raw,
 )
     if result.has_errors():
         raise ValueError(
@@ -216,14 +241,14 @@ def process_initialization(
         "Event":                           "PolicyIssue",
         "PolicyNumber":                    pick_first(row, "PolicyNumber"),
         "IssueDate":                       issue_dt,
-        "ProductType":                     pick_first(row, "ProductType"),
-        "PlanCode":                        pick_first(row, "PlanCode"),
+        "ProductType":                     product_type,
+        "PlanCode":                        plan_code,
         "Primary_IssueAge":                primary_issue_age,
+        "Primary_Sex":                     primary_sex,
         "Secondary_IssueAge":              secondary_issue_age,
-        "Primary_Sex":                      primary_sex,
-        "Secondary_Sex":                    secondary_sex,
-        "TermCertain":                      term_certain,
-        "AnnuityType":                      annuity_type,
+        "Secondary_Sex":                   secondary_sex,
+        "TermCertain":                     term_certain,
+        "AnnuityType":                     annuity_type_raw,
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
@@ -232,6 +257,7 @@ def process_initialization(
         "AccountValue":                    account_value,
         "AccumulatedInterestCurrentYear":  acc_int,
         "PenaltyFreeWithdrawalBalance":    pfwb,
+        "RMD":                             rmd,
     }
 
     calc: Dict[str, Any] = {

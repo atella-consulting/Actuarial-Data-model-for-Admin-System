@@ -45,6 +45,10 @@ def validate_initialization(
     lookup_gmir: Optional[float] = None,
     lookup_nonforf: Optional[float] = None,
     lookup_date: Optional[pd.Timestamp] = None,
+    rmd_qualified: Optional[str] = None,
+    owner_dob: Optional[pd.Timestamp] = None,
+    rmd_value: Optional[float] = None,
+    rmd_prior_year_end_balance: Any = None,
 ) -> ValidationResult:
     """
     Validate the core fields read during policy initialization (Event 1).
@@ -107,6 +111,25 @@ def validate_initialization(
             f"NonforfeitureRate ({lookup_nonforf:.6f}) outside configured range "
             f"[{NONFORFEITURE_MIN:.6f} ; {NONFORFEITURE_MAX:.6f}]"
         )
+
+    # --- RMD ---
+    rmd_flag = str(rmd_qualified).strip().upper() if rmd_qualified is not None else ""
+    if rmd_flag == "Y":
+        if owner_dob is None or (isinstance(owner_dob, pd.Timestamp) and pd.isna(owner_dob)):
+            result.add_error("OwnerDOB", "OwnerDOB is required when RMD_Qualified = Y")
+
+        has_prior_year_end_balance = not (
+            rmd_prior_year_end_balance is None
+            or (isinstance(rmd_prior_year_end_balance, float) and pd.isna(rmd_prior_year_end_balance))
+            or str(rmd_prior_year_end_balance).strip() in {"", "nan"}
+        )
+        if not has_prior_year_end_balance:
+            result.add_error(
+                "RMD",
+                "Prior-year-end account balance is required when RMD_Qualified = Y"
+            )
+        elif rmd_value is None:
+            result.add_error("RMD", "RMD could not be calculated for an RMD-qualified policy")
 
     # --- State ---
     if state is not None:

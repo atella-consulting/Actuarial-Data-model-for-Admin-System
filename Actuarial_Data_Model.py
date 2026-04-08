@@ -195,6 +195,22 @@ def load_mva_rates(xls: pd.ExcelFile) -> pd.DataFrame:
     return df
 
 
+
+def load_rmd_table(xls: pd.ExcelFile) -> pd.DataFrame:
+    """Read the ``RMD_Table_III`` sheet and return the IRS distribution table."""
+    if "RMD_Table_III" not in xls.sheet_names:
+        return pd.DataFrame(columns=["Age", "Distribution Period"])
+
+    df = pd.read_excel(xls, sheet_name="RMD_Table_III", engine="openpyxl")
+    if "Age" not in df.columns or "Distribution Period" not in df.columns:
+        raise ValueError("RMD_Table_III must contain columns 'Age' and 'Distribution Period'.")
+
+    df = df[["Age", "Distribution Period"]].copy()
+    df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
+    df["Distribution Period"] = pd.to_numeric(df["Distribution Period"], errors="coerce")
+    return df.dropna(subset=["Age", "Distribution Period"]).sort_values("Age").reset_index(drop=True)
+
+
 def find_policy_sheet(xls: pd.ExcelFile) -> str:
     """
     Return the input policy sheet name.
@@ -304,6 +320,7 @@ def process_single_policy(
     product_tables: pd.DataFrame,
     surrender_charges: pd.DataFrame,
     rates_df: pd.DataFrame,
+    rmd_table: pd.DataFrame,
 ) -> Tuple[Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]:
     """
     Process one policy row and return:
@@ -318,6 +335,7 @@ def process_single_policy(
         surrender_charges,
         product_tables,
         rates_df=rates_df,
+        rmd_table=rmd_table,
     )
 
     eod1_date = fmt_date(event1_output.eod.get("ValuationDate"))
@@ -409,6 +427,7 @@ def main() -> None:
     product_tables = load_product_tables(reference_xls)
     surrender_charges = load_surrender_charges(reference_xls)
     rates_df = load_mva_rates(reference_xls)
+    rmd_table = load_rmd_table(reference_xls)
 
     policy_sheet = find_policy_sheet(input_xls)
     policy_df = pd.read_excel(input_xls, sheet_name=policy_sheet, engine="openpyxl")
@@ -426,6 +445,7 @@ def main() -> None:
             product_tables,
             surrender_charges,
             rates_df,
+            rmd_table,
         )
 
         if ANNUITIZATION_SWITCH == "on":

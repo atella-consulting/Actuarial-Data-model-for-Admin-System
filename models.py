@@ -117,6 +117,18 @@ class AccountState:
     CashSurrenderValue: float = 0.0
     RemainingMonthsInGuaranteePeriod: int = 0
     DailyInterest: float = 0.0
+    RMD: float = 0.0
+
+    # Annuitization-related values carried on the live state dict
+    Primary_IssueAge: Optional[float] = None
+    Primary_Sex: Optional[str] = None
+    Secondary_IssueAge: Optional[float] = None
+    Secondary_Sex: Optional[str] = None
+    TermCertain: Optional[int] = None
+    AnnuityType: Optional[str] = None
+    PV_Expected_Benefits: Optional[float] = None
+    Purchase_Rate_per_1000: Optional[float] = None
+    Modal_Benefit_at_Issue: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
