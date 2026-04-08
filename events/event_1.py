@@ -41,6 +41,7 @@ from calculations import (
     resolve_mva_column,
     get_mva_rate,
     lookup_product_table_rate,
+    issue_age_from_annuitant_dob,
 )
 from validation import validate_initialization
 
@@ -65,6 +66,7 @@ def process_initialization(
     val_date     = to_ts(pick_first(row, "Valuation Date", "ValuationDate"))
     annuitant    = to_ts(pick_first(row, "AnnuitantDOB"))
     owner_dob    = to_ts(pick_first(row, "OwnerDOB"))
+    secondary_annuitant = to_ts(pick_first(row, "Secondary_AnnuitantDOB"))
     premium      = sfloat(pick_first(row, "SinglePremium"))
     product_type = as_code(pick_first(row, "ProductType"))
     plan_code    = as_code(pick_first(row, "PlanCode"))
@@ -178,15 +180,20 @@ def process_initialization(
     acc_int       = sfloat(pick_first(row, "AccumulatedInterestCurrentYear"), 0.0)
     pfwb          = sfloat(pick_first(row, "PenaltyFreeWithdrawalBalance"), 0.0)
 
+    primary_issue_age = issue_age_from_annuitant_dob(annuitant, issue_dt)
+    secondary_issue_age = issue_age_from_annuitant_dob(secondary_annuitant, issue_dt)
+
+    primary_sex = pick_first(row, "Primary_Sex")
+    secondary_sex = pick_first(row, "Secondary_Sex")
+    term_certain = pick_first(row, "TermCertain")
+    annuity_type = pick_first(row, "AnnuityType")
+
     # ------------------------------------------------------------------
     # 8. Validation
     # ------------------------------------------------------------------
-    issue_age_raw = pick_first(row, "Primary_IssueAge", "IssueAge")
-    issue_age = sfloat(issue_age_raw, None) if nonempty(issue_age_raw) else None
-
     result: ValidationResult = validate_initialization(
         issue_dt,
-        issue_age,
+        primary_issue_age,
         premium,
         acc_int,
         product_type,
@@ -211,7 +218,12 @@ def process_initialization(
         "IssueDate":                       issue_dt,
         "ProductType":                     pick_first(row, "ProductType"),
         "PlanCode":                        pick_first(row, "PlanCode"),
-        "IssueAge":                        issue_age_raw,
+        "Primary_IssueAge":                primary_issue_age,
+        "Secondary_IssueAge":              secondary_issue_age,
+        "Primary_Sex":                      primary_sex,
+        "Secondary_Sex":                    secondary_sex,
+        "TermCertain":                      term_certain,
+        "AnnuityType":                      annuity_type,
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,

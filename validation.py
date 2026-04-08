@@ -35,7 +35,7 @@ from utils import sfloat, nonempty, to_ts
 
 def validate_initialization(
     issue_dt: Optional[pd.Timestamp],
-    issue_age: Optional[float],
+    primary_issue_age: Optional[float],
     premium: float,
     AccumulatedInterestCurrentYear: Optional[float] = None,
     product_type: Optional[str] = None,
@@ -52,7 +52,7 @@ def validate_initialization(
     Rules
     -----
     - IssueDate must be present and fall in [2020-01-01, today]  → E
-    - IssueAge must be in [0, 95] when provided                  → W
+    - Primary_IssueAge must be in [0, 95] when provided          → W
     - SinglePremium must be in [10,000, 1,000,000]               → W
     - AccumulatedInterestCurrentYear must be in [10,000, 1,000,000] if provided → W
 
@@ -72,11 +72,11 @@ def validate_initialization(
             f"IssueDate outside [2020-01-01 ; {TODAY.date()}]",
         )
 
-    # --- IssueAge ---
-    if issue_age is not None and not (0 <= issue_age <= 95):
-        result.add_warning("IssueAge", "IssueAge outside expected range [0 ; 95]")
-    elif issue_age is None:
-        result.add_warning("IssueAge", "IssueAge not provided")
+    # --- Primary_IssueAge ---
+    if primary_issue_age is not None and not (0 <= primary_issue_age <= 95):
+        result.add_warning("Primary_IssueAge", "Primary_IssueAge outside expected range [0 ; 95]")
+    elif primary_issue_age is None:
+        result.add_warning("Primary_IssueAge", "Primary_IssueAge not provided")
 
     # --- SinglePremium ---
     if premium < 10_000 or premium > 1_000_000:

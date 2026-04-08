@@ -6,7 +6,7 @@ from typing import Any, Dict, Tuple
 import pandas as pd
 
 from models import EventOutput, ValidationResult
-from utils import pick_first, sfloat, nonempty, merge_state
+from utils import sfloat, nonempty, merge_state
 from calculations import lookup_product_table_rate
 
 
@@ -154,18 +154,18 @@ def process_annuitization(
 ) -> EventOutput:
     result = ValidationResult()
 
-    annuity_type_raw = pick_first(row, "AnnuityType")
+    annuity_type_raw = base_state.get("AnnuityType")
     annuity_type = str(annuity_type_raw or "").strip().lower()
 
-    primary_age_raw = pick_first(row, "Primary_IssueAge", "IssueAge")
-    primary_sex = pick_first(row, "Primary_Sex")
+    primary_age_raw = base_state.get("Primary_IssueAge")
+    primary_sex = base_state.get("Primary_Sex")
 
-    secondary_age_raw = pick_first(row, "Secondary_IssueAge")
-    secondary_sex = pick_first(row, "Secondary_Sex")
+    secondary_age_raw = base_state.get("Secondary_IssueAge")
+    secondary_sex = base_state.get("Secondary_Sex")
 
-    term_raw = pick_first(row, "TermCertain")
+    term_raw = base_state.get("TermCertain")
 
-    primary_age = int(sfloat(primary_age_raw, -1))
+    primary_age = int(sfloat(primary_age_raw, -1)) if nonempty(primary_age_raw) else None
     secondary_age = int(sfloat(secondary_age_raw, -1)) if nonempty(secondary_age_raw) else None
     term = int(sfloat(term_raw, -1)) if nonempty(term_raw) else None
 
@@ -198,7 +198,7 @@ def process_annuitization(
             f"{base_state.get('ProductType')} / <= {base_state.get('ValuationDate')}"
         )
 
-    if not nonempty(primary_sex) or primary_age < 0:
+    if not nonempty(primary_sex) or primary_age is None or primary_age < 0:
         result.add_error("PrimaryAnnuitant", "Primary_Sex and Primary_IssueAge are required")
 
     if annuity_type in {"joint_survivor", "joint_life"}:

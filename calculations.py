@@ -234,6 +234,39 @@ def month_diff(start: Any, end: Any) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Annuitant age helpers
+# ---------------------------------------------------------------------------
+
+def age_last_birthday(dob: Any, as_of_date: Any) -> Optional[int]:
+    """
+    Return integer age on the last birthday as of *as_of_date*.
+
+    Returns ``None`` when either date is missing or unparseable.
+    """
+    dob_ts = to_ts(dob)
+    as_of_ts = to_ts(as_of_date)
+    if pd.isna(dob_ts) or pd.isna(as_of_ts):
+        return None
+
+    age = as_of_ts.year - dob_ts.year
+    if (as_of_ts.month, as_of_ts.day) < (dob_ts.month, dob_ts.day):
+        age -= 1
+    return max(int(age), 0)
+
+
+def issue_age_from_annuitant_dob(annuitant_dob: Any, issue_dt: Any) -> Optional[int]:
+    """
+    Derive issue age from the annuitant DOB and the policy issue date.
+
+    Business rule:
+      - use only the matching annuitant DOB
+      - do not fall back to owner DOB
+      - return ``None`` when the DOB or issue date is missing/invalid
+    """
+    return age_last_birthday(annuitant_dob, issue_dt)
+
+
+# ---------------------------------------------------------------------------
 # Surrender charge lookup
 # ---------------------------------------------------------------------------
 
