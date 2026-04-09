@@ -197,6 +197,8 @@ def process_initialization(
     primary_issue_age = calculate_issue_age(annuitant, issue_dt)
     secondary_issue_age = calculate_issue_age(secondary_annuitant, issue_dt)
     term_certain = int(sfloat(term_certain_raw, -1)) if nonempty(term_certain_raw) else None
+    prior_year_end_balance = sfloat(prior_year_end_balance_raw, 0.0)
+
 
     try:
         rmd = calculate_rmd(
@@ -208,6 +210,10 @@ def process_initialization(
         )
     except ValueError:
         rmd = None
+
+    rmd_pct = None
+    if rmd is not None and prior_year_end_balance > 0:
+        rmd_pct = rmd / prior_year_end_balance
 
     # ------------------------------------------------------------------
     # 8. Validation
@@ -249,16 +255,20 @@ def process_initialization(
         "Secondary_Sex":                   secondary_sex,
         "TermCertain":                     term_certain,
         "AnnuityType":                     annuity_type_raw,
+        "RMD_Qualified":                   rmd_qualified,
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
         "AnnuitantDOB":                    annuitant,
         "OwnerDOB":                        owner_dob,
+        "Secondary_AnnuitantDOB":          pick_first(row, "Secondary_AnnuitantDOB"),
+        "Secondary_OwnerDOB":              pick_first(row, "Secondary_OwnerDOB"),
         "AccountValue":                    account_value,
         "PriorYearEndAccountValue":        pick_first(row, "PriorYearEndAccountValue"),
         "AccumulatedInterestCurrentYear":  acc_int,
         "PenaltyFreeWithdrawalBalance":    pfwb,
         "RMD":                             rmd,
+        "RMD%":                            rmd_pct,
     }
 
     calc: Dict[str, Any] = {
