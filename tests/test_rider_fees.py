@@ -11,6 +11,7 @@ import pytest
 
 from calculations import parse_selected_riders, rider_credit_rate_adjustment
 from events.event_1 import process_initialization
+from events.event_2 import process_withdrawal
 
 
 def _product_tables_for_riders() -> pd.DataFrame:
@@ -47,6 +48,17 @@ def _minimal_policy_row(selected_riders: str) -> pd.Series:
             "AccumulatedInterestCurrentYear": 0.0,
             "PenaltyFreeWithdrawalBalance": 0.0,
         }
+    )
+
+
+def _sc_table_standard() -> pd.DataFrame:
+    return pd.DataFrame([{"Year": 1, "ChargeRate": 0.08}])
+
+
+def _mva_rates_for_event2() -> pd.DataFrame:
+    return pd.DataFrame(
+        {"Y05": [0.043]},
+        index=pd.to_datetime(["2026-06-14"]),
     )
 
 
@@ -126,3 +138,76 @@ def test_process_initialization_reads_input_total_riders_rate_when_provided():
 
     assert result.eod["TotalRidersRate"] == pytest.approx(0.0040)
     assert result.eod["CurrentCreditRate"] == pytest.approx(0.0500 - 0.0040)
+
+
+def test_death_benefit_amount_equals_account_value_when_dbr_selected():
+    result = process_initialization(
+        row=_minimal_policy_row("DBR, 5WR"),
+        sc_tbl=_sc_table_standard(),
+        product_tables=_product_tables_for_riders(),
+        rates_df=None,
+        rmd_table=None,
+    )
+    assert result.eod["Death_Benefit_Amount"] == pytest.approx(result.eod["AccountValue"])
+
+
+def test_death_benefit_amount_equals_csv_when_dbr_not_selected():
+    result = process_initialization(
+        row=_minimal_policy_row("5WR"),
+        sc_tbl=_sc_table_standard(),
+        product_tables=_product_tables_for_riders(),
+        rates_df=None,
+        rmd_table=None,
+    )
+    assert result.eod["Death_Benefit_Amount"] == pytest.approx(result.eod["CashSurrenderValue"])
+    assert result.eod["Death_Benefit_Amount"] < result.eod["AccountValue"]
+
+
+def test_event2_death_benefit_amount_uses_csv_without_dbr_even_with_mva():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 5_000.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "5WR",
+    }
+    event_input = {"Gross WD": 10_000.0, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+    )
+
+    assert result.eod["MVA"] != 0.0
+    assert result.eod["Death_Benefit_Amount"] == pytest.approx(result.eod["CashSurrenderValue"])
+
+
+def test_event2_death_benefit_amount_uses_account_value_with_dbr_even_with_mva():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 5_000.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "DBR, 5WR",
+    }
+    event_input = {"Gross WD": 10_000.0, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+    )
+
+    assert result.eod["MVA"] != 0.0
+    assert result.eod["Death_Benefit_Amount"] == pytest.approx(result.eod["AccountValue"])

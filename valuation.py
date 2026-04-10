@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config import STATIC_CARRY, PLAN_YEARS
-from calculations import snapshot
+from calculations import snapshot, compute_death_benefit_amount
 from utils import to_ts, sfloat, safe_replace_year, as_code
 
 
@@ -131,6 +131,13 @@ def roll_forward(
     valuation_state: Dict[str, Any] = {
         field: prior_eod.get(field) for field in STATIC_CARRY
     }
+    snap = snapshot(new_date, av_before_charge, issue_dt, gp_end, sc_tbl)
+    death_benefit_amount = compute_death_benefit_amount(
+        selected_riders=prior_eod.get("SelectedRiders"),
+        accumulation_value=av_before_charge,
+        cash_surrender_value=snap.get("CashSurrenderValue"),
+    )
+
     valuation_state.update(
         {
             "ValuationDate": new_date,
@@ -143,7 +150,8 @@ def roll_forward(
             "DailyInterest": period_interest,
             "AccumulatedInterestCurrentYear": acc_int,
             # Derived snapshot fields
-            **snapshot(new_date, av_before_charge, issue_dt, gp_end, sc_tbl),
+            **snap,
+            "Death_Benefit_Amount": death_benefit_amount,
             # Clear transaction fields — they do not carry forward
             "GrossWD": None,
             "Net":     None,

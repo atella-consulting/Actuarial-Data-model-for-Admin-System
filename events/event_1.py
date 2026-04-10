@@ -44,6 +44,7 @@ from calculations import (
     calculate_rmd,
     calculate_issue_age,
     rider_credit_rate_adjustment,
+    compute_death_benefit_amount,
 )
 from validation import validate_initialization
 
@@ -199,6 +200,7 @@ def process_initialization(
     # 7. Balance fields
     # ------------------------------------------------------------------
     account_value = sfloat(pick_first(row, "AccountValue"), premium)
+    input_death_benefit_amount = sfloat(pick_first(row, "Death_Benefit_Amount"), None)
     guaranteed_minimum_av = sfloat(pick_first(row, "GuaranteedMinimumAV"), account_value)
     acc_int       = sfloat(pick_first(row, "AccumulatedInterestCurrentYear"), 0.0)
     pfwb          = sfloat(pick_first(row, "PenaltyFreeWithdrawalBalance"), 0.0)
@@ -280,6 +282,7 @@ def process_initialization(
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
+        "Death_Benefit_Amount":            input_death_benefit_amount,
         "TotalRidersRate":                 total_riders_rate,
         "AnnuitantDOB":                    annuitant,
         "OwnerDOB":                        owner_dob,
@@ -292,6 +295,13 @@ def process_initialization(
         "RMD":                             rmd,
         "RMD%":                            rmd_pct,
     }
+
+    snap = snapshot(val_date, account_value, issue_dt, gp_end, sc_tbl)
+    death_benefit_amount = compute_death_benefit_amount(
+        selected_riders=selected_riders,
+        accumulation_value=account_value,
+        cash_surrender_value=snap.get("CashSurrenderValue"),
+    )
 
     calc: Dict[str, Any] = {
         "EffectiveDate":                effective_date,
@@ -306,9 +316,10 @@ def process_initialization(
         "GuaranteePeriodEndDate":        gp_end,
         "CurrentCreditRate":             current_credit_rate,
         "TotalRidersRate":               total_riders_rate,
+        "Death_Benefit_Amount":          death_benefit_amount,
         "MVAReferenceRateAtStart":       mva_ref,
         "DailyInterest":                 0.0,
-        **snapshot(val_date, account_value, issue_dt, gp_end, sc_tbl),
+        **snap,
     }
 
     # ------------------------------------------------------------------

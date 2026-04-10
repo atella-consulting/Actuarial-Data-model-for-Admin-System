@@ -147,6 +147,7 @@ FIELDS: list = [
     "SurrenderCharge",
     "MVA",
     "CashSurrenderValue",
+    "Death_Benefit_Amount",
     "DailyInterest",
     "GrossWD",
     "Net",
@@ -208,6 +209,7 @@ FIELD_DOMAIN: dict = {
     "SurrenderCharge":                 "Balance",
     "MVA":                             "Balance",
     "CashSurrenderValue":              "Balance",
+    "Death_Benefit_Amount":            "Balance",
     "DailyInterest":                   "Balance",
     "GrossWD":                         "Transaction",
     "Net":                             "Transaction",
@@ -278,6 +280,7 @@ STATIC_CARRY: list = [
     "PV Expected Benefits",
     "Purchase Rate per $1,000",
     "Modal Benefit @ Issue",
+    "Death_Benefit_Amount",
 ]
 
 # ---------------------------------------------------------------------------

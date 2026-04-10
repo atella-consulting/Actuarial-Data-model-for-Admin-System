@@ -116,6 +116,7 @@ class AccountState:
 
     # Derived totals
     CashSurrenderValue: float = 0.0
+    Death_Benefit_Amount: float = 0.0
     RemainingMonthsInGuaranteePeriod: int = 0
     DailyInterest: float = 0.0
     RMD: float = 0.0

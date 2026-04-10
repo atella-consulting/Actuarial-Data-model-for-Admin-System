@@ -218,6 +218,26 @@ def rider_credit_rate_adjustment(
         "conflicts": conflicts,
     }
 
+
+def has_death_benefit_rider(selected_riders: Any) -> bool:
+    """Return True when DBR is present in SelectedRiders."""
+    return "DBR" in set(parse_selected_riders(selected_riders))
+
+
+def compute_death_benefit_amount(
+    selected_riders: Any,
+    accumulation_value: Any,
+    cash_surrender_value: Any,
+) -> float:
+    """
+    Compute Death_Benefit_Amount by rider rule:
+      - DBR selected: use accumulation value (AccountValue), no MVA impact
+      - DBR not selected: use cash surrender value (includes MVA when present)
+    """
+    av = sfloat(accumulation_value, 0.0)
+    csv = sfloat(cash_surrender_value, av)
+    return av if has_death_benefit_rider(selected_riders) else csv
+
 def is_mva_waiver_window(
     val_date: Any,
     gp_start: Any,

@@ -23,6 +23,7 @@ from calculations import (
     get_mva_rate,
     is_mva_waiver_window,
     compute_mva,
+    compute_death_benefit_amount,
 )
 from validation import validate_withdrawal
 
@@ -194,6 +195,11 @@ def process_withdrawal(
     # Recalculate CashSurrenderValue to include the MVA adjustment.
     snap["CashSurrenderValue"] = (
         post_av + mva - snap["SurrenderCharge"]
+    )
+    snap["Death_Benefit_Amount"] = compute_death_benefit_amount(
+        selected_riders=val_state.get("SelectedRiders"),
+        accumulation_value=post_av,
+        cash_surrender_value=snap["CashSurrenderValue"],
     )
 
     calc: Dict[str, Any] = {
