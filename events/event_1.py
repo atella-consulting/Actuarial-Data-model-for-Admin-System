@@ -43,6 +43,7 @@ from calculations import (
     lookup_product_table_rate,
     calculate_rmd,
     calculate_issue_age,
+    rider_credit_rate_adjustment,
 )
 from validation import validate_initialization
 
@@ -161,6 +162,20 @@ def process_initialization(
     nonforf = lookup_nonforf if lookup_nonforf is not None else NONFORFEITURE
     premium_tax = PREMIUM_TAX_RATE
     current_credit_rate = lookup_ccr if lookup_ccr is not None else 0.0
+    input_total_riders_rate = to_pct(pick_first(row, "TotalRidersRate"))
+
+    rider_adjustment = rider_credit_rate_adjustment(
+        product_tables=product_tables,
+        product_type=product_type,
+        valuation_date=lookup_date,
+        selected_riders=selected_riders,
+    )
+    total_riders_rate = (
+        input_total_riders_rate
+        if input_total_riders_rate is not None
+        else rider_adjustment["total_fee"]
+    )
+    current_credit_rate -= total_riders_rate
 
     # print("DEBUG product_type:", product_type)
     # print("DEBUG lookup_date:", lookup_date)
@@ -239,6 +254,12 @@ def process_initialization(
             f"[PolicyIssue] fatal validation errors:\n{result.error_summary()}"
         )
 
+    if rider_adjustment["conflicts"]:
+        result.add_warning(
+            "SelectedRiders",
+            "; ".join(rider_adjustment["conflicts"]),
+        )
+
     # ------------------------------------------------------------------
     # 9. Assemble data / calc dicts
     # ------------------------------------------------------------------
@@ -259,6 +280,7 @@ def process_initialization(
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
+        "TotalRidersRate":                 total_riders_rate,
         "AnnuitantDOB":                    annuitant,
         "OwnerDOB":                        owner_dob,
         "Secondary_AnnuitantDOB":          pick_first(row, "Secondary_AnnuitantDOB"),
@@ -283,6 +305,7 @@ def process_initialization(
         "GuaranteePeriodStartDate":      gp_start,
         "GuaranteePeriodEndDate":        gp_end,
         "CurrentCreditRate":             current_credit_rate,
+        "TotalRidersRate":               total_riders_rate,
         "MVAReferenceRateAtStart":       mva_ref,
         "DailyInterest":                 0.0,
         **snapshot(val_date, account_value, issue_dt, gp_end, sc_tbl),

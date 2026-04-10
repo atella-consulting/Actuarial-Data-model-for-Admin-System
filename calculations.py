@@ -18,11 +18,11 @@ Contents
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from utils import to_ts, to_pct, sfloat, safe_replace_year
+from utils import to_ts, to_pct, sfloat, safe_replace_year, nonempty
 
 from config import MVA_DATE_COLUMN, MVA_RATE_COLUMNS, MVA_PLAN_TO_COLUMN, MVA_WAIVER_DAYS, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE
 
@@ -109,6 +109,114 @@ def lookup_product_table_rate(
 
     eligible = eligible.sort_values("EffectiveDate")
     return to_pct(eligible.iloc[-1]["Value"])
+
+
+def parse_selected_riders(selected_riders: Any) -> List[str]:
+    """
+    Parse and normalize the SelectedRiders field into rider codes.
+
+    Normalization rules:
+      - split by comma
+      - trim whitespace
+      - uppercase
+      - deduplicate while preserving order
+    """
+    if not nonempty(selected_riders):
+        return []
+
+    riders: List[str] = []
+    seen = set()
+
+    for token in str(selected_riders).split(","):
+        code = token.strip().upper()
+        if not code:
+            continue
+        if code not in seen:
+            seen.add(code)
+            riders.append(code)
+
+    return riders
+
+
+def lookup_rider_fee_rate(
+    product_tables: pd.DataFrame,
+    rider_table_name: str,
+    product_type: str,
+    valuation_date: Any,
+) -> Optional[float]:
+    """
+    Lookup a rider fee using ProductTables date-effective logic.
+
+    Required ProductTables layout:
+      TableName = "RiderFee", ProductType = rider table name
+    """
+    return lookup_product_table_rate(
+        product_tables=product_tables,
+        table_name="RiderFee",
+        product_type=rider_table_name,
+        valuation_date=valuation_date,
+    )
+
+
+def rider_credit_rate_adjustment(
+    product_tables: pd.DataFrame,
+    product_type: str,
+    valuation_date: Any,
+    selected_riders: Any,
+) -> Dict[str, Any]:
+    """
+    Resolve rider fees and validation conflicts for SelectedRiders.
+
+    Rider mapping to ProductTables table names:
+      DBR  -> DeathBenefit
+      5WR  -> 5FreeWD
+      IWR  -> InterestWD
+      EIWR -> EnhInterestWD      (placeholder, not applied yet)
+      LBR  -> placeholder         (not applied yet)
+      ELBR -> EnhBenefitWD
+    """
+    rider_to_table = {
+        "DBR": "DeathBenefit",
+        "5WR": "5FreeWD",
+        "IWR": "InterestWD",
+        "EIWR": "EnhInterestWD",
+        "ELBR": "EnhBenefitWD",
+    }
+
+    riders = parse_selected_riders(selected_riders)
+    rider_set = set(riders)
+    applied_fees: Dict[str, float] = {}
+
+    for rider in riders:
+        # Placeholder only (not applied yet)
+        if rider in {"LBR", "EIWR"}:
+            continue
+
+        table_name = rider_to_table.get(rider)
+        if not table_name:
+            continue
+
+        fee = lookup_rider_fee_rate(
+            product_tables=product_tables,
+            rider_table_name=table_name,
+            product_type=product_type,
+            valuation_date=valuation_date,
+        )
+        if fee is not None:
+            applied_fees[rider] = fee
+
+    conflicts: List[str] = []
+    if {"ELBR", "LBR"}.issubset(rider_set):
+        conflicts.append("ELBR cannot be selected together with LBR")
+    if {"EIWR", "IWR"}.issubset(rider_set):
+        conflicts.append("EIWR cannot be selected together with IWR")
+
+    return {
+        "riders": riders,
+        "applied_fees": applied_fees,
+        "total_fee": float(sum(applied_fees.values())),
+        "conflicts": conflicts,
+    }
 
 def is_mva_waiver_window(
     val_date: Any,

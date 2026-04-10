@@ -68,6 +68,7 @@ class Policy:
     NonforfeitureRate: Optional[float] = None
     PremiumTaxRate: float = 0.0
     CurrentCreditRate: float = 0.0
+    TotalRidersRate: float = 0.0
     MVAReferenceRateAtStart: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
