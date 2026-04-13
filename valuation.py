@@ -18,7 +18,11 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from config import STATIC_CARRY, PLAN_YEARS
-from calculations import snapshot, compute_death_benefit_amount
+from calculations import (
+    snapshot,
+    compute_death_benefit_amount,
+    free_withdrawal_components,
+)
 from utils import to_ts, sfloat, safe_replace_year, as_code
 
 
@@ -137,6 +141,12 @@ def roll_forward(
         accumulation_value=av_before_charge,
         cash_surrender_value=snap.get("CashSurrenderValue"),
     )
+    free_withdrawal_amount = free_withdrawal_components(
+        accumulated_interest_current_year=acc_int,
+        rmd=prior_eod.get("RMD"),
+        tax_qualified=prior_eod.get("Tax_Qualified"),
+        rmd_qualified=prior_eod.get("RMD_Qualified"),
+    )["free_withdrawal_amount"]
 
     valuation_state.update(
         {
@@ -149,6 +159,7 @@ def roll_forward(
             "GuaranteedMinimumAV": new_gmav,
             "DailyInterest": period_interest,
             "AccumulatedInterestCurrentYear": acc_int,
+            "Free_Withdrawal_Amount": free_withdrawal_amount,
             # Derived snapshot fields
             **snap,
             "Death_Benefit_Amount": death_benefit_amount,

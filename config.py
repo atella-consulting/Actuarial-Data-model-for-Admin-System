@@ -118,6 +118,7 @@ FIELDS: list = [
     "AnnuityType",
 
     "RMD_Qualified",
+    "Tax_Qualified",
     "State",
     "SinglePremium",
     "SelectedRiders",
@@ -133,21 +134,20 @@ FIELDS: list = [
     "GuaranteePeriodStartDate",
     "GuaranteePeriodEndDate",
     "Term_Period",
-    "CurrentCreditRate",
     "TotalRidersRate",
+    "CurrentCreditRate",
     "MVAReferenceRateAtStart",
     "AccumulatedInterestCurrentYear",
     "PenaltyFreeWithdrawalBalance",
-    "RemainingMonthsInGuaranteePeriod",
     "AccountValue",
     "PriorYearEndAccountValue",
     "RMD",
     "RMD%",
+    "RemainingMonthsInGuaranteePeriod",
     "SurrenderChargeRate",
     "SurrenderCharge",
     "MVA",
     "CashSurrenderValue",
-    "Death_Benefit_Amount",
     "DailyInterest",
     "GrossWD",
     "Net",
@@ -155,6 +155,8 @@ FIELDS: list = [
     "PV Expected Benefits",
     "Purchase Rate per $1,000",
     "Modal Benefit @ Issue",
+    "Death_Benefit_Amount",
+    "Free_Withdrawal_Amount",
 ]
 
 # ---------------------------------------------------------------------------
@@ -180,6 +182,7 @@ FIELD_DOMAIN: dict = {
     "AnnuityType":                    "Annuitization",
 
     "RMD_Qualified":                   "Identity",
+    "Tax_Qualified":                   "Identity",
     "State":                           "Identity",
     "SinglePremium":                   "Policy",
     "SelectedRiders":                  "Policy",
@@ -217,6 +220,7 @@ FIELD_DOMAIN: dict = {
     "PV Expected Benefits":            "Annuitization",
     "Purchase Rate per $1,000":        "Annuitization",
     "Modal Benefit @ Issue":           "Annuitization",
+    "Free_Withdrawal_Amount":          "Balance",
 }
 
 # ---------------------------------------------------------------------------
@@ -249,6 +253,7 @@ STATIC_CARRY: list = [
     "ProductType",
     "PlanCode",
     "RMD_Qualified",
+    "Tax_Qualified",
     "State",
     "SinglePremium",
     "SelectedRiders",
@@ -281,6 +286,7 @@ STATIC_CARRY: list = [
     "Purchase Rate per $1,000",
     "Modal Benefit @ Issue",
     "Death_Benefit_Amount",
+    "Free_Withdrawal_Amount",
 ]
 
 # ---------------------------------------------------------------------------

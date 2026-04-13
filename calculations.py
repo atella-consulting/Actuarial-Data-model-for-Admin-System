@@ -380,6 +380,40 @@ def calculate_rmd(
 
     return balance / factor
 
+
+def free_withdrawal_components(
+    accumulated_interest_current_year: Any,
+    rmd: Any,
+    *,
+    tax_qualified: Any = None,
+    rmd_qualified: Any = None,
+) -> Dict[str, Any]:
+    """
+    Return Interest Withdrawal Rider components and free amount.
+
+    Rule:
+      A = max(0, AccumulatedInterestCurrentYear)
+      B = max(0, RMD) only when tax-qualified
+      Free_Withdrawal_Amount = max(A, B)
+
+    Tax qualification flag precedence:
+      1) Tax_Qualified
+      2) RMD_Qualified (fallback when Tax_Qualified missing)
+    """
+    a = max(0.0, sfloat(accumulated_interest_current_year, 0.0))
+
+    tax_raw = tax_qualified if nonempty(tax_qualified) else rmd_qualified
+    tax_flag = str(tax_raw).strip().upper() == "Y"
+
+    b = max(0.0, sfloat(rmd, 0.0)) if tax_flag else 0.0
+
+    return {
+        "a": a,
+        "b": b,
+        "tax_qualified": tax_flag,
+        "free_withdrawal_amount": max(a, b),
+    }
+
 # ---------------------------------------------------------------------------
 # Policy year
 # ---------------------------------------------------------------------------

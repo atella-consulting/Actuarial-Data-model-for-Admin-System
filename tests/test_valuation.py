@@ -156,6 +156,32 @@ def test_roll_forward_resets_on_anniversary(sc):
     )
 
 
+def test_roll_forward_sets_free_withdrawal_amount_without_withdrawal_event(sc):
+    result = roll_forward(eod(), sc, "2026-06-15")
+    assert result["Free_Withdrawal_Amount"] == pytest.approx(
+        result["AccumulatedInterestCurrentYear"], rel=1e-9
+    )
+
+
+def test_roll_forward_free_withdrawal_uses_rmd_when_tax_qualified(sc):
+    state = eod()
+    state["Tax_Qualified"] = "Y"
+    state["RMD"] = 5_000.0
+
+    result = roll_forward(state, sc, "2026-06-15")
+    assert result["Free_Withdrawal_Amount"] == pytest.approx(5_000.0, rel=1e-9)
+
+
+def test_roll_forward_free_withdrawal_falls_back_to_rmd_qualified_flag(sc):
+    state = eod()
+    state["Tax_Qualified"] = None
+    state["RMD_Qualified"] = "Y"
+    state["RMD"] = 9_999.0
+
+    result = roll_forward(state, sc, "2026-06-15")
+    assert result["Free_Withdrawal_Amount"] == pytest.approx(9_999.0, rel=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------

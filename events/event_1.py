@@ -45,6 +45,7 @@ from calculations import (
     calculate_issue_age,
     rider_credit_rate_adjustment,
     compute_death_benefit_amount,
+    free_withdrawal_components,
 )
 from validation import validate_initialization
 
@@ -77,6 +78,7 @@ def process_initialization(
     state_raw    = pick_first(row, "State")
     state = str(state_raw).strip().upper() if nonempty(state_raw) else None
     rmd_qualified = pick_first(row, "RMD_Qualified", "RMD_qualified")
+    tax_qualified = pick_first(row, "Tax_Qualified", "TaxQualified")
 
     primary_sex = pick_first(row, "Primary_Sex")
     secondary_sex = pick_first(row, "Secondary_Sex")
@@ -232,6 +234,13 @@ def process_initialization(
     if rmd is not None and prior_year_end_balance > 0:
         rmd_pct = rmd / prior_year_end_balance
 
+    free_withdrawal_amount = free_withdrawal_components(
+        accumulated_interest_current_year=acc_int,
+        rmd=rmd,
+        tax_qualified=tax_qualified,
+        rmd_qualified=rmd_qualified,
+    )["free_withdrawal_amount"]
+
     # ------------------------------------------------------------------
     # 8. Validation
     # ------------------------------------------------------------------
@@ -279,6 +288,7 @@ def process_initialization(
         "TermCertain":                     term_certain,
         "AnnuityType":                     annuity_type_raw,
         "RMD_Qualified":                   rmd_qualified,
+        "Tax_Qualified":                   tax_qualified,
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
@@ -294,6 +304,7 @@ def process_initialization(
         "PenaltyFreeWithdrawalBalance":    pfwb,
         "RMD":                             rmd,
         "RMD%":                            rmd_pct,
+        "Free_Withdrawal_Amount":          free_withdrawal_amount,
     }
 
     snap = snapshot(val_date, account_value, issue_dt, gp_end, sc_tbl)

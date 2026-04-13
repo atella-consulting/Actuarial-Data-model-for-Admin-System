@@ -176,8 +176,11 @@ def validate_withdrawal(
     gross_wd: float,
     pre_av: float,
     pfwb: float,
+    event_date_provided: Optional[bool] = None,
     rate_at_start: Optional[float] = None,
     rate_current: Optional[float] = None,
+    charge_free_limit: Optional[float] = None,
+    charge_free_limit_label: str = "PenaltyFreeWithdrawalBalance",
 ) -> ValidationResult:
     """
     Validate the fields read during partial-withdrawal processing (Event 2).
@@ -185,15 +188,25 @@ def validate_withdrawal(
     Rules
     -----
     - Event 2 valuation date is system-derived from Event 1 valuation date + 1 day
+    - Missing valuation date on input row                                  -> W
     - GrossWD > AccountValue → withdrawal exceeds account value   → E
-    - GrossWD > PFWB         → withdrawal exceeds penalty-free
-                               withdrawal balance                  → W
+    - GrossWD > limit        → withdrawal exceeds charge-free
+                               withdrawal limit                    → W
     - rate_at_start missing  → cannot compute MVA                 → E
     - rate_at_start not in [MVA_MIN_REF_RATE, MVA_MAX_REF_RATE]     → W
     - rate_current not in [MVA_MIN_REF_RATE, MVA_MAX_REF_RATE]      → W
     - |rate_current - rate_at_start| > 0.10 → large rate change (>10 pp)         → W
     """
     result = ValidationResult()
+    applied_limit = max(0.0, sfloat(charge_free_limit, pfwb))
+    limit_label = str(charge_free_limit_label or "PenaltyFreeWithdrawalBalance")
+
+    # --- Event date availability (warning only) ---
+    if event_date_provided is False:
+        result.add_warning(
+            "ValuationDate",
+            "Valuation Date not explicitly provided; using the prior valuation state date",
+        )
 
     # --- GrossWD vs AccountValue (fatal) ---
     if gross_wd > pre_av:
@@ -201,16 +214,16 @@ def validate_withdrawal(
             "GrossWD",
             f"GrossWD ({gross_wd:,.2f}) exceeds AccountValue ({pre_av:,.2f})",
         )
-    # --- GrossWD vs PFWB (warning only) ---
-    elif gross_wd > pfwb:
+    # --- GrossWD vs charge-free limit (warning only) ---
+    elif gross_wd > applied_limit:
         result.add_warning(
             "GrossWD",
             f"GrossWD ({gross_wd:,.2f}) exceeds "
-            f"PenaltyFreeWithdrawalBalance ({pfwb:,.2f})",
+            f"{limit_label} ({applied_limit:,.2f})",
         )
 
-    # --- MVA reference rate validation (only when excess withdrawal exists) ---
-    excess_exists = gross_wd > pfwb
+    # --- MVA reference rate validation (only when charge-bearing withdrawal exists) ---
+    excess_exists = gross_wd > applied_limit
 
     if excess_exists:
         # Missing rate at start → MVA cannot be computed

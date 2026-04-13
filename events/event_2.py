@@ -24,6 +24,10 @@ from calculations import (
     is_mva_waiver_window,
     compute_mva,
     compute_death_benefit_amount,
+    parse_selected_riders,
+    policy_year,
+    month_diff,
+    free_withdrawal_components,
 )
 from validation import validate_withdrawal
 
@@ -72,7 +76,8 @@ def process_withdrawal(
     Process Event 2 — PartialWithdrawal.
 
     Reads the event input, validates withdrawal amounts against the
-    current account value and penalty-free withdrawal balance, applies
+    current account value and the applicable charge-free withdrawal
+    limit, applies
     the withdrawal, and returns a fully structured :class:`EventOutput`.
 
     Raises
@@ -90,16 +95,42 @@ def process_withdrawal(
         if nonempty(event_date_raw)
         else to_ts(val_state["ValuationDate"])
     )
-    
+
     gross_wd = sfloat(event_input.get("GrossWD") or event_input.get("Gross WD"), 0.0)
     net      = sfloat(event_input.get("Net"),  None) if nonempty(event_input.get("Net"))  else None
     tax      = sfloat(event_input.get("Tax"),  None) if nonempty(event_input.get("Tax"))  else None
 
     # ------------------------------------------------------------------
-    # 2. Pre-withdrawal balances from the incoming valuation state
+    # 2. Pre-withdrawal balances and rider context
     # ------------------------------------------------------------------
     pre_av = sfloat(val_state.get("AccountValue"))
     pfwb   = sfloat(val_state.get("PenaltyFreeWithdrawalBalance"), 0.0)
+    issue_dt = to_ts(val_state.get("IssueDate"))
+    gp_start = to_ts(val_state.get("GuaranteePeriodStartDate"))
+    gp_end   = to_ts(val_state.get("GuaranteePeriodEndDate"))
+
+    rider_set = set(parse_selected_riders(val_state.get("SelectedRiders")))
+    has_interest_withdrawal_rider = bool(rider_set.intersection({"IWR", "EIWR"}))
+    wd_policy_year = policy_year(issue_dt, event_date)
+    rider_applies = has_interest_withdrawal_rider and wd_policy_year >= 2
+
+    # Interest Withdrawal Rider free amount:
+    #   A = AccumulatedInterestCurrentYear
+    #   B = RMD (only when tax-qualified)
+    #   Free = max(A, B)
+    free_amount_parts = free_withdrawal_components(
+        accumulated_interest_current_year=val_state.get("AccumulatedInterestCurrentYear"),
+        rmd=val_state.get("RMD"),
+        tax_qualified=val_state.get("Tax_Qualified"),
+        rmd_qualified=val_state.get("RMD_Qualified"),
+    )
+    accum_interest = free_amount_parts["a"]
+    rmd_component = free_amount_parts["b"]
+    tax_qualified = free_amount_parts["tax_qualified"]
+    free_withdrawal_amount = free_amount_parts["free_withdrawal_amount"]
+
+    charge_free_limit = free_withdrawal_amount if rider_applies else pfwb
+    charge_free_limit_label = "FreeWithdrawalAmount" if rider_applies else "PenaltyFreeWithdrawalBalance"
 
     # ------------------------------------------------------------------
     # 3. MVA rate look-ups
@@ -110,7 +141,7 @@ def process_withdrawal(
     # ------------------------------------------------------------------
     rate_at_start: Optional[float] = sfloat(
         val_state.get("MVAReferenceRateAtStart"), None
-    ) or None 
+    ) or None
 
     mva_column: Optional[str] = val_state.get("_mva_column")
 
@@ -119,15 +150,25 @@ def process_withdrawal(
     rate_current: Optional[float] = get_mva_rate(rates_df, day_before_event, column=mva_column)
 
     # ------------------------------------------------------------------
-    # 4. Validation (now includes MVA rate checks for excess withdrawals)
+    # 4. Validation (includes MVA rate checks when charge-bearing amount exists)
     # ------------------------------------------------------------------
     result = validate_withdrawal(
-        gross_wd,
-        pre_av,
-        pfwb,
-        rate_at_start,
-        rate_current
+        gross_wd=gross_wd,
+        pre_av=pre_av,
+        pfwb=pfwb,
+        event_date_provided=nonempty(event_date_raw),
+        rate_at_start=rate_at_start,
+        rate_current=rate_current,
+        charge_free_limit=charge_free_limit,
+        charge_free_limit_label=charge_free_limit_label,
     )
+    if has_interest_withdrawal_rider and wd_policy_year < 2:
+        result.add_warning(
+            "InterestWithdrawalRider",
+            "Interest Withdrawal Rider starts in Policy Year 2; "
+            f"withdrawal is in Policy Year {wd_policy_year}, so rider waiver was not applied.",
+        )
+
     if result.has_errors():
         raise ValueError(
             f"[PartialWithdrawal] fatal validation errors:\n{result.error_summary()}"
@@ -136,19 +177,25 @@ def process_withdrawal(
     # ------------------------------------------------------------------
     # 5. Compute MVA
     #
-    # MVA applies only to the portion of the withdrawal that exceeds the
-    # penalty-free withdrawal balance (the "excess amount").
+    # Default rule:
+    #   MVA applies only to withdrawal above the charge-free limit.
+    #
+    # Interest Withdrawal Rider override (when rider applies):
+    #   - If GrossWD <= FreeWithdrawalAmount: MVA is waived.
+    #   - If GrossWD >  FreeWithdrawalAmount: MVA applies to the ENTIRE
+    #     withdrawal amount, not just the excess.
+    #
     # The MVA is waived entirely during the 30-day window at the start of
     # the guarantee period.
     # ------------------------------------------------------------------
-    excess_amount = max(0.0, gross_wd - pfwb)
-
-    gp_start = to_ts(val_state.get("GuaranteePeriodStartDate"))
-    gp_end   = to_ts(val_state.get("GuaranteePeriodEndDate"))
-    issue_dt = to_ts(val_state.get("IssueDate"))
+    if rider_applies:
+        iwr_waived_charges = gross_wd <= free_withdrawal_amount
+        mva_charge_amount = 0.0 if iwr_waived_charges else gross_wd
+    else:
+        iwr_waived_charges = False
+        mva_charge_amount = max(0.0, gross_wd - pfwb)
 
     # Whole months remaining in the guarantee period (used as 't').
-    from calculations import month_diff
     remaining_months = month_diff(event_date, gp_end)
 
     # Check waiver window first.
@@ -156,14 +203,14 @@ def process_withdrawal(
 
     if (
         in_waiver_window
-        or excess_amount <= 0.0
+        or mva_charge_amount <= 0.0
         or rate_at_start is None
         or rate_current is None
     ):
         mva = 0.0
-        mva_waived = in_waiver_window
+        mva_waived = in_waiver_window or iwr_waived_charges
     else:
-        mva = compute_mva(excess_amount, rate_at_start, rate_current, remaining_months)
+        mva = compute_mva(mva_charge_amount, rate_at_start, rate_current, remaining_months)
         mva_waived = False
 
     # ------------------------------------------------------------------
@@ -191,6 +238,16 @@ def process_withdrawal(
         gp_end,
         sc_tbl,
     )
+
+    # Interest Withdrawal Rider surrender-charge rule:
+    #   - within free amount: surrender charge is waived
+    #   - above free amount : surrender charge applies to entire withdrawal
+    if rider_applies:
+        if gross_wd <= free_withdrawal_amount:
+            snap["SurrenderCharge"] = 0.0
+        else:
+            snap["SurrenderCharge"] = gross_wd * snap["SurrenderChargeRate"]
+
     snap["MVA"] = mva  # override the placeholder 0.0 with the actual MVA
     # Recalculate CashSurrenderValue to include the MVA adjustment.
     snap["CashSurrenderValue"] = (
@@ -205,12 +262,21 @@ def process_withdrawal(
     calc: Dict[str, Any] = {
         "AccountValue":              post_av,
         "PenaltyFreeWithdrawalBalance": post_pfwb,
+        "Free_Withdrawal_Amount":    free_withdrawal_amount,
         # Debug / audit fields recorded in calc block
-        "_mva_excess_amount":        excess_amount,
+        "_mva_excess_amount":        mva_charge_amount,
         "_mva_rate_at_start":        rate_at_start,
         "_mva_rate_current":         rate_current,
         "_mva_remaining_months":     remaining_months,
         "_mva_waived":               mva_waived,
+        "_iwr_selected":             has_interest_withdrawal_rider,
+        "_iwr_applies":              rider_applies,
+        "_iwr_policy_year":          wd_policy_year,
+        "_iwr_tax_qualified":        tax_qualified,
+        "_iwr_free_amount_a":        accum_interest,
+        "_iwr_free_amount_b":        rmd_component,
+        "_iwr_free_withdrawal_amount": free_withdrawal_amount,
+        "_iwr_waived_charges":       iwr_waived_charges,
         **snap,
     }
 
