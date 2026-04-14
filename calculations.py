@@ -206,10 +206,12 @@ def rider_credit_rate_adjustment(
             applied_fees[rider] = fee
 
     conflicts: List[str] = []
-    if {"ELBR", "LBR"}.issubset(rider_set):
-        conflicts.append("ELBR cannot be selected together with LBR")
-    if {"EIWR", "IWR"}.issubset(rider_set):
-        conflicts.append("EIWR cannot be selected together with IWR")
+    wd_rider_group = {"IWR", "LBR", "ELBR"}
+    selected_wd_riders = [r for r in riders if r in wd_rider_group]
+    if len(selected_wd_riders) > 1:
+        conflicts.append(
+            "Only one WD rider can be selected from: IWR, LBR, ELBR"
+        )
 
     return {
         "riders": riders,

@@ -125,10 +125,42 @@ def test_process_initialization_warns_when_elbr_and_lbr_selected_together():
 
     warnings = dict(result.validation.warnings())
     assert "SelectedRiders" in warnings
-    assert "ELBR cannot be selected together with LBR" in warnings["SelectedRiders"]
+    assert "Only one WD rider can be selected from: IWR, LBR, ELBR" in warnings["SelectedRiders"]
 
 
-def test_process_initialization_warns_when_eiwr_and_iwr_selected_together():
+def test_process_initialization_warns_when_iwr_and_lbr_selected_together():
+    result = process_initialization(
+        row=_minimal_policy_row("IWR, LBR"),
+        sc_tbl=pd.DataFrame(columns=["Year", "ChargeRate"]),
+        product_tables=_product_tables_for_riders(),
+        rates_df=None,
+        rmd_table=None,
+    )
+
+    warnings = dict(result.validation.warnings())
+    assert "SelectedRiders" in warnings
+    assert "Only one WD rider can be selected from: IWR, LBR, ELBR" in warnings["SelectedRiders"]
+
+    # LBR is placeholder-only for now, so only IWR fee is applied.
+    assert result.eod["CurrentCreditRate"] == pytest.approx(0.0500 - 0.0030)
+
+
+def test_process_initialization_allows_dbr_with_one_wd_rider():
+    result = process_initialization(
+        row=_minimal_policy_row("DBR, IWR"),
+        sc_tbl=pd.DataFrame(columns=["Year", "ChargeRate"]),
+        product_tables=_product_tables_for_riders(),
+        rates_df=None,
+        rmd_table=None,
+    )
+
+    warnings = dict(result.validation.warnings())
+    assert "SelectedRiders" not in warnings
+    # Base 5.00% minus DBR 0.10% and IWR 0.30%
+    assert result.eod["CurrentCreditRate"] == pytest.approx(0.0500 - 0.0010 - 0.0030)
+
+
+def test_process_initialization_allows_eiwr_with_iwr_under_new_wd_group_rule():
     result = process_initialization(
         row=_minimal_policy_row("EIWR, IWR"),
         sc_tbl=pd.DataFrame(columns=["Year", "ChargeRate"]),
@@ -138,10 +170,8 @@ def test_process_initialization_warns_when_eiwr_and_iwr_selected_together():
     )
 
     warnings = dict(result.validation.warnings())
-    assert "SelectedRiders" in warnings
-    assert "EIWR cannot be selected together with IWR" in warnings["SelectedRiders"]
-
-    # EIWR is placeholder-only for now, so only IWR fee is applied.
+    assert "SelectedRiders" not in warnings
+    # EIWR remains placeholder-only for fee application.
     assert result.eod["CurrentCreditRate"] == pytest.approx(0.0500 - 0.0030)
 
 
