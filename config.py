@@ -52,6 +52,9 @@ ANNUITY_PROJECTION_TABLE = "Projection_Scale_G2.csv"
 # Number of calendar days at the *start* of each guarantee period during
 # which the MVA is waived
 MVA_WAIVER_DAYS: int = 30
+# Number of calendar days from IssueDate during which the Right-to-Examine
+# (free-look) period is active.
+RIGHT_TO_EXAMINE_DAYS: int = 30
 # Date column name in the MVA_Table tab
 MVA_DATE_COLUMN: str = "MDATE"
 MVA_RATE_COLUMNS: list = [
@@ -119,6 +122,7 @@ FIELDS: list = [
 
     "RMD_Qualified",
     "Tax_Qualified",
+    "PriorYear_RiderWithdrawalUsed",
     "State",
     "SinglePremium",
     "SelectedRiders",
@@ -139,7 +143,10 @@ FIELDS: list = [
     "MVAReferenceRateAtStart",
     "AccumulatedInterestCurrentYear",
     "PenaltyFreeWithdrawalBalance",
+    "PenaltyFreeWithdrawalAmount",
+    "EnhancedPenaltyFreeWithdrawalAmount",
     "AccountValue",
+    "PrecedingContractAnniversaryAccountValue",
     "PriorYearEndAccountValue",
     "RMD",
     "RMD%",
@@ -149,6 +156,7 @@ FIELDS: list = [
     "MVA",
     "CashSurrenderValue",
     "DailyInterest",
+    "WithdrawalCount_ContractYear",
     "GrossWD",
     "Net",
     "Tax",
@@ -183,6 +191,7 @@ FIELD_DOMAIN: dict = {
 
     "RMD_Qualified":                   "Identity",
     "Tax_Qualified":                   "Identity",
+    "PriorYear_RiderWithdrawalUsed":   "Identity",
     "State":                           "Identity",
     "SinglePremium":                   "Policy",
     "SelectedRiders":                  "Policy",
@@ -203,8 +212,11 @@ FIELD_DOMAIN: dict = {
     "MVAReferenceRateAtStart":         "Rate",
     "AccumulatedInterestCurrentYear":  "Balance",
     "PenaltyFreeWithdrawalBalance":    "Balance",
+    "PenaltyFreeWithdrawalAmount":     "Balance",
+    "EnhancedPenaltyFreeWithdrawalAmount": "Balance",
     "RemainingMonthsInGuaranteePeriod": "Term",
     "AccountValue":                    "Balance",
+    "PrecedingContractAnniversaryAccountValue": "Balance",
     "PriorYearEndAccountValue":        "Balance",
     "RMD":                             "Balance",
     "RMD%":                            "Rate",
@@ -214,6 +226,7 @@ FIELD_DOMAIN: dict = {
     "CashSurrenderValue":              "Balance",
     "Death_Benefit_Amount":            "Balance",
     "DailyInterest":                   "Balance",
+    "WithdrawalCount_ContractYear":    "Balance",
     "GrossWD":                         "Transaction",
     "Net":                             "Transaction",
     "Tax":                             "Transaction",
@@ -254,6 +267,7 @@ STATIC_CARRY: list = [
     "PlanCode",
     "RMD_Qualified",
     "Tax_Qualified",
+    "PriorYear_RiderWithdrawalUsed",
     "State",
     "SinglePremium",
     "SelectedRiders",
@@ -273,6 +287,9 @@ STATIC_CARRY: list = [
     "MVAReferenceRateAtStart",
     "AccumulatedInterestCurrentYear",
     "PenaltyFreeWithdrawalBalance",
+    "PenaltyFreeWithdrawalAmount",
+    "EnhancedPenaltyFreeWithdrawalAmount",
+    "PrecedingContractAnniversaryAccountValue",
     "PriorYearEndAccountValue",
     "Primary_Sex",
     "Secondary_Sex",
@@ -287,6 +304,9 @@ STATIC_CARRY: list = [
     "Modal Benefit @ Issue",
     "Death_Benefit_Amount",
     "Free_Withdrawal_Amount",
+    "WithdrawalCount_ContractYear",
+    # Backward-compatible alias carried for older inputs/states.
+    "Withdrawal_Count",
 ]
 
 # ---------------------------------------------------------------------------
@@ -298,8 +318,8 @@ STATIC_CARRY: list = [
 #   "selected" — audit only the policies listed in AUDIT_SELECTED_POLICIES
 #   "all"      — audit every policy in the run
 
-AUDIT_MODE: str = "none"
-AUDIT_SELECTED_POLICIES: list = []   # e.g. [1, 4, 102]  — used when mode is "selected"
+AUDIT_MODE: str = "selected"
+AUDIT_SELECTED_POLICIES: list = [1,10,15,20]   # e.g. [1, 4, 102]  — used when mode is "selected"
 
 # ---------------------------------------------------------------------------
 # Optional annuitization add-on

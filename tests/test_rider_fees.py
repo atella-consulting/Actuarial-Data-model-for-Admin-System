@@ -32,6 +32,9 @@ def _product_tables_for_riders() -> pd.DataFrame:
         {"TableName": "RiderFee", "ProductType": "InterestWD", "Value": 0.0030, "EffectiveDate": base_date},
         {"TableName": "RiderFee", "ProductType": "EnhInterestWD", "Value": 0.0040, "EffectiveDate": base_date},
         {"TableName": "RiderFee", "ProductType": "EnhBenefitWD", "Value": 0.0050, "EffectiveDate": base_date},
+        # LBR / ELBR withdrawal-limit percentages
+        {"TableName": "FreeWD", "ProductType": "LiquidityBenefitWD", "Value": 0.10, "EffectiveDate": base_date},
+        {"TableName": "FreeWD", "ProductType": "EnhLiquidityBenefitWD", "Value": 0.20, "EffectiveDate": base_date},
     ]
     return pd.DataFrame(rows)
 
@@ -112,6 +115,23 @@ def test_process_initialization_reduces_current_credit_rate_by_selected_riders()
 
     # Base CCR 5.00% reduced by DBR 0.10% and 5WR 0.20%
     assert result.eod["CurrentCreditRate"] == pytest.approx(0.0500 - 0.0010 - 0.0020)
+
+
+def test_process_initialization_calculates_penalty_free_amount_fields_and_ignores_inputs():
+    policy = _minimal_policy_row("LBR, ELBR")
+    policy["PenaltyFreeWithdrawalAmount"] = 12_345.0
+    policy["EnhancedPenaltyFreeWithdrawalAmount"] = 54_321.0
+
+    result = process_initialization(
+        row=policy,
+        sc_tbl=pd.DataFrame(columns=["Year", "ChargeRate"]),
+        product_tables=_product_tables_for_riders(),
+        rates_df=None,
+        rmd_table=None,
+    )
+
+    assert result.eod["PenaltyFreeWithdrawalAmount"] == pytest.approx(10_000.0)
+    assert result.eod["EnhancedPenaltyFreeWithdrawalAmount"] == pytest.approx(20_000.0)
 
 
 def test_process_initialization_warns_when_elbr_and_lbr_selected_together():
@@ -387,3 +407,389 @@ def test_iwr_in_policy_year_1_emits_warning_and_does_not_apply_rider_waiver():
     assert result.calc["_iwr_applies"] is False
     assert "InterestWithdrawalRider" in warnings
     assert result.eod["SurrenderCharge"] == pytest.approx((100_000.0 - 5_000.0) * 0.08)
+
+
+def test_lbr_first_withdrawal_within_limit_waives_sc_and_mva():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "LBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": 9_000.0, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    assert result.calc["_wd_rider_for_waiver"] == "LBR"
+    assert result.calc["_wd_rider_applies"] is True
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(10_000.0)
+    assert result.eod["SurrenderCharge"] == pytest.approx(0.0)
+    assert result.eod["MVA"] == pytest.approx(0.0)
+
+
+def test_lbr_base_amount_uses_single_premium_in_first_contract_year():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 80_000.0,
+        "SinglePremium": 100_000.0,
+        "PrecedingContractAnniversaryAccountValue": 80_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "LBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": 9_000.0, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    assert result.calc["_wd_policy_year"] == 1
+    assert result.calc["_wd_penalty_free_base_source"] == "SinglePremium"
+    assert result.calc["_wd_penalty_free_base_amount"] == pytest.approx(100_000.0)
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(10_000.0)
+    assert result.eod["SurrenderCharge"] == pytest.approx(0.0)
+    assert result.eod["MVA"] == pytest.approx(0.0)
+
+
+def test_lbr_base_amount_uses_preceding_anniversary_value_after_first_contract_year():
+    gross_wd = 11_000.0
+    val_state = {
+        "ValuationDate": pd.Timestamp("2027-06-15"),
+        "AccountValue": 120_000.0,
+        "SinglePremium": 100_000.0,
+        "PrecedingContractAnniversaryAccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "LBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": gross_wd, "Valuation Date": "2027-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_year1_year2(),
+        rates_df=_mva_rates_for_event2_with_year2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    expected_mva = compute_mva(gross_wd, 0.05, 0.043, month_diff("2027-06-15", "2031-01-15"))
+    assert result.calc["_wd_policy_year"] == 2
+    assert result.calc["_wd_penalty_free_base_source"] == "PrecedingContractAnniversaryAccountValue"
+    assert result.calc["_wd_penalty_free_base_amount"] == pytest.approx(100_000.0)
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(10_000.0)
+    assert result.eod["SurrenderChargeRate"] == pytest.approx(0.07)
+    assert result.eod["SurrenderCharge"] == pytest.approx(gross_wd * 0.07)
+    assert result.eod["MVA"] == pytest.approx(expected_mva)
+
+
+def test_lbr_above_limit_applies_sc_and_mva_to_entire_withdrawal():
+    gross_wd = 15_000.0
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "LBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": gross_wd, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    expected_mva = compute_mva(gross_wd, 0.05, 0.043, month_diff("2026-06-15", "2031-01-15"))
+    assert result.calc["_wd_rider_applies"] is True
+    assert result.calc["_mva_excess_amount"] == pytest.approx(gross_wd)
+    assert result.eod["SurrenderCharge"] == pytest.approx(gross_wd * 0.08)
+    assert result.eod["MVA"] == pytest.approx(expected_mva)
+
+
+def test_elbr_uses_enhanced_limit_when_prior_year_not_used():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "ELBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": 15_000.0, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    assert result.calc["_wd_rider_for_waiver"] == "ELBR"
+    assert result.calc["_elbr_limit_mode"] == "enhanced"
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(20_000.0)
+    assert result.eod["SurrenderCharge"] == pytest.approx(0.0)
+    assert result.eod["MVA"] == pytest.approx(0.0)
+
+
+def test_elbr_uses_regular_limit_when_prior_year_used():
+    gross_wd = 15_000.0
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "ELBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "T",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": gross_wd, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    expected_mva = compute_mva(gross_wd, 0.05, 0.043, month_diff("2026-06-15", "2031-01-15"))
+    assert result.calc["_elbr_limit_mode"] == "regular"
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(10_000.0)
+    assert result.calc["_mva_excess_amount"] == pytest.approx(gross_wd)
+    assert result.eod["SurrenderCharge"] == pytest.approx(gross_wd * 0.08)
+    assert result.eod["MVA"] == pytest.approx(expected_mva)
+
+
+def test_wd_rider_conflict_records_error_and_disables_waiver():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2027-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 5_000.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "IWR, LBR",
+        "AccumulatedInterestCurrentYear": 8_000.0,
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+    }
+    event_input = {"Gross WD": 7_000.0, "Valuation Date": "2027-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_year1_year2(),
+        rates_df=_mva_rates_for_event2_with_year2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    assert "SelectedRiders" in dict(result.validation.errors())
+    assert result.calc["_wd_rider_conflict"] is True
+    assert result.calc["_wd_rider_applies"] is False
+    assert result.calc["_mva_excess_amount"] == pytest.approx(2_000.0)
+
+
+def test_lbr_ignores_input_penalty_free_withdrawal_amount_and_uses_calculated_amount():
+    gross_wd = 11_000.0
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "PenaltyFreeWithdrawalAmount": 12_000.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "LBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": gross_wd, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    expected_mva = compute_mva(gross_wd, 0.05, 0.043, month_diff("2026-06-15", "2031-01-15"))
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(10_000.0)
+    assert result.eod["SurrenderCharge"] == pytest.approx(gross_wd * 0.08)
+    assert result.eod["MVA"] == pytest.approx(expected_mva)
+
+
+def test_elbr_ignores_input_enhanced_amount_and_uses_calculated_amount():
+    gross_wd = 21_000.0
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "EnhancedPenaltyFreeWithdrawalAmount": 30_000.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "ELBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": gross_wd, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    expected_mva = compute_mva(gross_wd, 0.05, 0.043, month_diff("2026-06-15", "2031-01-15"))
+    assert result.calc["_elbr_limit_mode"] == "enhanced"
+    assert result.calc["_wd_rider_limit_amount"] == pytest.approx(20_000.0)
+    assert result.eod["SurrenderCharge"] == pytest.approx(gross_wd * 0.08)
+    assert result.eod["MVA"] == pytest.approx(expected_mva)
+
+
+def test_event2_recalculates_penalty_free_amount_fields_ignoring_input_values():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2027-06-15"),
+        "AccountValue": 120_000.0,
+        "SinglePremium": 100_000.0,
+        "PrecedingContractAnniversaryAccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalAmount": 123.0,
+        "EnhancedPenaltyFreeWithdrawalAmount": 456.0,
+        "PenaltyFreeWithdrawalBalance": 0.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "LBR",
+        "Withdrawal_Count": 1,
+        "PriorYear_RiderWithdrawalUsed": "F",
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": 100.0, "Valuation Date": "2027-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_year1_year2(),
+        rates_df=_mva_rates_for_event2_with_year2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    assert result.eod["PenaltyFreeWithdrawalAmount"] == pytest.approx(10_000.0)
+    assert result.eod["EnhancedPenaltyFreeWithdrawalAmount"] == pytest.approx(20_000.0)
+
+
+def test_withdrawal_count_contract_year_increments_on_withdrawal():
+    val_state = {
+        "ValuationDate": pd.Timestamp("2026-06-15"),
+        "AccountValue": 100_000.0,
+        "PenaltyFreeWithdrawalBalance": 10_000.0,
+        "IssueDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodStartDate": pd.Timestamp("2026-01-15"),
+        "GuaranteePeriodEndDate": pd.Timestamp("2031-01-15"),
+        "MVAReferenceRateAtStart": 0.05,
+        "_mva_column": "Y05",
+        "SelectedRiders": "",
+        "WithdrawalCount_ContractYear": 1,
+        "RMD_Qualified": "N",
+        "Tax_Qualified": "N",
+        "RMD": 0.0,
+    }
+    event_input = {"Gross WD": 500.0, "Valuation Date": "2026-06-15"}
+
+    result = process_withdrawal(
+        val_state=val_state,
+        event_input=event_input,
+        sc_tbl=_sc_table_standard(),
+        rates_df=_mva_rates_for_event2(),
+        product_tables=_product_tables_for_riders(),
+    )
+
+    assert result.eod["WithdrawalCount_ContractYear"] == 2
+    assert result.eod["Withdrawal_Count"] == 2

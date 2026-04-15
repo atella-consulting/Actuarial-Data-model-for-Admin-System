@@ -113,9 +113,50 @@ def roll_forward(
     # ------------------------------------------------------------------
     period_interest = av_before_charge - prior_av
     anniversary = safe_replace_year(issue_dt, new_date.year)
+    prior_preceding_contract_anniversary_av = sfloat(
+        prior_eod.get("PrecedingContractAnniversaryAccountValue"),
+        prior_av,
+    )
+    preceding_anniversary = pd.NaT
+    if not pd.isna(anniversary):
+        if new_date.date() < anniversary.date():
+            preceding_anniversary = safe_replace_year(issue_dt, new_date.year - 1)
+        else:
+            preceding_anniversary = anniversary
+
+    if pd.isna(preceding_anniversary):
+        preceding_contract_anniversary_av = prior_preceding_contract_anniversary_av
+    else:
+        crossed_preceding_anniversary = (
+            not pd.isna(prior_date)
+            and prior_date < preceding_anniversary <= new_date
+        )
+        if crossed_preceding_anniversary:
+            days_to_preceding = max((preceding_anniversary - prior_date).days, 0)
+            growth_to_preceding = (
+                (1 + ccr) ** (days_to_preceding / 365)
+                if days_to_preceding > 0
+                else 1.0
+            )
+            preceding_contract_anniversary_av = prior_av * growth_to_preceding
+        else:
+            preceding_contract_anniversary_av = prior_preceding_contract_anniversary_av
+
+    withdrawal_count_contract_year = int(
+        max(
+            0.0,
+            sfloat(
+                prior_eod.get("WithdrawalCount_ContractYear")
+                if prior_eod.get("WithdrawalCount_ContractYear") is not None
+                else prior_eod.get("Withdrawal_Count"),
+                0.0,
+            ),
+        )
+    )
 
     if not pd.isna(anniversary) and new_date.date() == anniversary.date():
         acc_int = period_interest
+        withdrawal_count_contract_year = 0
         new_gmav -= mgsv_contract_charge
     else:
         acc_int = sfloat(prior_eod.get("AccumulatedInterestCurrentYear"), 0.0) + period_interest
@@ -156,9 +197,12 @@ def roll_forward(
             "Term_Period": term_period,
             "AnniversaryDateNext": anniversary_next,
             "AccountValue": av_before_charge,
+            "PrecedingContractAnniversaryAccountValue": preceding_contract_anniversary_av,
             "GuaranteedMinimumAV": new_gmav,
             "DailyInterest": period_interest,
             "AccumulatedInterestCurrentYear": acc_int,
+            "WithdrawalCount_ContractYear": withdrawal_count_contract_year,
+            "Withdrawal_Count": withdrawal_count_contract_year,
             "Free_Withdrawal_Amount": free_withdrawal_amount,
             # Derived snapshot fields
             **snap,

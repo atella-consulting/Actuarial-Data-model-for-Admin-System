@@ -34,6 +34,9 @@ def eod(val_date=ISSUE_DATE, av=SINGLE_PREMIUM, cr=CREDIT_RATE) -> dict:
         "CurrentCreditRate":               cr,
         "AccumulatedInterestCurrentYear":  0.0,
         "PenaltyFreeWithdrawalBalance":    0.0,
+        "PrecedingContractAnniversaryAccountValue": SINGLE_PREMIUM,
+        "WithdrawalCount_ContractYear":    0,
+        "Withdrawal_Count":                0,
         "IssueDate":                       pd.Timestamp(ISSUE_DATE),
         "GuaranteePeriodEndDate":          pd.Timestamp("2031-01-15"),
         "GuaranteePeriodStartDate":        pd.Timestamp(ISSUE_DATE),
@@ -153,6 +156,37 @@ def test_roll_forward_resets_on_anniversary(sc):
     result = roll_forward(eod(), sc, "2027-01-15")
     assert result["AccumulatedInterestCurrentYear"] == pytest.approx(
         result["DailyInterest"], rel=1e-6
+    )
+
+
+def test_roll_forward_resets_withdrawal_count_on_anniversary(sc):
+    state = eod()
+    state["WithdrawalCount_ContractYear"] = 3
+    state["Withdrawal_Count"] = 3
+    result = roll_forward(state, sc, "2027-01-15")
+    assert result["WithdrawalCount_ContractYear"] == 0
+
+
+def test_roll_forward_carries_withdrawal_count_before_anniversary(sc):
+    state = eod()
+    state["WithdrawalCount_ContractYear"] = 3
+    state["Withdrawal_Count"] = 3
+    result = roll_forward(state, sc, "2026-07-15")
+    assert result["WithdrawalCount_ContractYear"] == 3
+
+
+def test_roll_forward_updates_preceding_contract_anniversary_av_on_anniversary(sc):
+    result = roll_forward(eod(), sc, "2027-01-15")
+    assert result["PrecedingContractAnniversaryAccountValue"] == pytest.approx(
+        result["AccountValue"], rel=1e-9
+    )
+
+
+def test_roll_forward_sets_preceding_contract_anniversary_av_when_crossing_anniversary(sc):
+    result = roll_forward(eod(), sc, "2027-06-15")
+    expected_anniversary_av = 100_000 * (1 + CREDIT_RATE) ** (365 / 365)
+    assert result["PrecedingContractAnniversaryAccountValue"] == pytest.approx(
+        expected_anniversary_av, rel=1e-9
     )
 
 

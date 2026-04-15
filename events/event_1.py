@@ -46,6 +46,8 @@ from calculations import (
     rider_credit_rate_adjustment,
     compute_death_benefit_amount,
     free_withdrawal_components,
+    lookup_free_withdrawal_percentage,
+    policy_year,
 )
 from validation import validate_initialization
 
@@ -79,6 +81,16 @@ def process_initialization(
     state = str(state_raw).strip().upper() if nonempty(state_raw) else None
     rmd_qualified = pick_first(row, "RMD_Qualified", "RMD_qualified")
     tax_qualified = pick_first(row, "Tax_Qualified", "TaxQualified")
+    prior_year_rider_wd_used = pick_first(row, "PriorYear_RiderWithdrawalUsed")
+    withdrawal_count_contract_year = int(
+        max(
+            0.0,
+            sfloat(
+                pick_first(row, "WithdrawalCount_ContractYear", "Withdrawal_Count"),
+                0.0,
+            ),
+        )
+    )
 
     primary_sex = pick_first(row, "Primary_Sex")
     secondary_sex = pick_first(row, "Secondary_Sex")
@@ -202,6 +214,10 @@ def process_initialization(
     # 7. Balance fields
     # ------------------------------------------------------------------
     account_value = sfloat(pick_first(row, "AccountValue"), premium)
+    preceding_contract_anniversary_av = sfloat(
+        pick_first(row, "PrecedingContractAnniversaryAccountValue"),
+        account_value,
+    )
     input_death_benefit_amount = sfloat(pick_first(row, "Death_Benefit_Amount"), None)
     guaranteed_minimum_av = sfloat(pick_first(row, "GuaranteedMinimumAV"), account_value)
     acc_int       = sfloat(pick_first(row, "AccumulatedInterestCurrentYear"), 0.0)
@@ -240,6 +256,28 @@ def process_initialization(
         tax_qualified=tax_qualified,
         rmd_qualified=rmd_qualified,
     )["free_withdrawal_amount"]
+
+    wd_policy_year = policy_year(issue_dt, val_date)
+    penalty_free_base_amount = (
+        max(0.0, premium)
+        if wd_policy_year <= 1
+        else max(0.0, preceding_contract_anniversary_av)
+    )
+    lbr_percentage = lookup_free_withdrawal_percentage(
+        product_tables=product_tables,
+        rider_table_name="LiquidityBenefitWD",
+        valuation_date=val_date,
+    )
+    elbr_enhanced_percentage = lookup_free_withdrawal_percentage(
+        product_tables=product_tables,
+        rider_table_name="EnhLiquidityBenefitWD",
+        valuation_date=val_date,
+    )
+    penalty_free_withdrawal_amount = penalty_free_base_amount * max(0.0, sfloat(lbr_percentage, 0.0))
+    enhanced_penalty_free_withdrawal_amount = penalty_free_base_amount * max(
+        0.0,
+        sfloat(elbr_enhanced_percentage, 0.0),
+    )
 
     # ------------------------------------------------------------------
     # 8. Validation
@@ -289,6 +327,7 @@ def process_initialization(
         "AnnuityType":                     annuity_type_raw,
         "RMD_Qualified":                   rmd_qualified,
         "Tax_Qualified":                   tax_qualified,
+        "PriorYear_RiderWithdrawalUsed":   prior_year_rider_wd_used,
         "State":                           state,
         "SinglePremium":                   premium,
         "SelectedRiders":                  selected_riders,
@@ -299,11 +338,16 @@ def process_initialization(
         "Secondary_AnnuitantDOB":          pick_first(row, "Secondary_AnnuitantDOB"),
         "Secondary_OwnerDOB":              pick_first(row, "Secondary_OwnerDOB"),
         "AccountValue":                    account_value,
+        "PrecedingContractAnniversaryAccountValue": preceding_contract_anniversary_av,
         "PriorYearEndAccountValue":        pick_first(row, "PriorYearEndAccountValue"),
         "AccumulatedInterestCurrentYear":  acc_int,
         "PenaltyFreeWithdrawalBalance":    pfwb,
+        "PenaltyFreeWithdrawalAmount":     penalty_free_withdrawal_amount,
+        "EnhancedPenaltyFreeWithdrawalAmount": enhanced_penalty_free_withdrawal_amount,
         "RMD":                             rmd,
         "RMD%":                            rmd_pct,
+        "WithdrawalCount_ContractYear":    withdrawal_count_contract_year,
+        "Withdrawal_Count":                withdrawal_count_contract_year,
         "Free_Withdrawal_Amount":          free_withdrawal_amount,
     }
 

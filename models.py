@@ -106,6 +106,9 @@ class AccountState:
     GuaranteedMinimumAV: float = 0.0
     AccumulatedInterestCurrentYear: float = 0.0
     PenaltyFreeWithdrawalBalance: float = 0.0
+    PenaltyFreeWithdrawalAmount: Optional[float] = None
+    EnhancedPenaltyFreeWithdrawalAmount: Optional[float] = None
+    PrecedingContractAnniversaryAccountValue: Optional[float] = None
 
     # Surrender charge
     SurrenderChargeRate: float = 0.0
@@ -120,6 +123,10 @@ class AccountState:
     RemainingMonthsInGuaranteePeriod: int = 0
     DailyInterest: float = 0.0
     RMD: float = 0.0
+    WithdrawalCount_ContractYear: int = 0
+    # Backward-compatible alias for older input layouts.
+    Withdrawal_Count: Optional[int] = None
+    PriorYear_RiderWithdrawalUsed: Optional[str] = None
 
     # Annuitization-related values carried on the live state dict
     Primary_IssueAge: Optional[float] = None

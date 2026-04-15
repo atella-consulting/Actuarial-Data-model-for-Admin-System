@@ -400,6 +400,7 @@ def process_single_policy(
             event2_input,
             surrender_charges,
             rates_df=rates_df,
+            product_tables=product_tables,
         )
         eod2_date = fmt_date(event2_output.eod.get("ValuationDate"))
         col_specs.extend(event2_output.as_col_specs(eod2_date))

@@ -24,7 +24,15 @@ import pandas as pd
 
 from utils import to_ts, to_pct, sfloat, safe_replace_year, nonempty
 
-from config import MVA_DATE_COLUMN, MVA_RATE_COLUMNS, MVA_PLAN_TO_COLUMN, MVA_WAIVER_DAYS, MVA_MIN_REF_RATE, MVA_MAX_REF_RATE
+from config import (
+    MVA_DATE_COLUMN,
+    MVA_RATE_COLUMNS,
+    MVA_PLAN_TO_COLUMN,
+    MVA_WAIVER_DAYS,
+    MVA_MIN_REF_RATE,
+    MVA_MAX_REF_RATE,
+    RIGHT_TO_EXAMINE_DAYS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +423,104 @@ def free_withdrawal_components(
         "tax_qualified": tax_flag,
         "free_withdrawal_amount": max(a, b),
     }
+
+
+def truthy_flag(value: Any) -> bool:
+    """
+    Interpret a generic yes/no flag from policy inputs.
+
+    Treats ``Y``, ``YES``, ``T``, ``TRUE``, and ``1`` as true.
+    """
+    if not nonempty(value):
+        return False
+    return str(value).strip().upper() in {"Y", "YES", "T", "TRUE", "1"}
+
+
+def lookup_free_withdrawal_percentage(
+    product_tables: pd.DataFrame,
+    rider_table_name: str,
+    valuation_date: Any,
+) -> Optional[float]:
+    """
+    Lookup a free-withdrawal percentage in ProductTables.
+
+    Required ProductTables layout:
+      TableName = ``FreeWD``, ProductType = rider table name.
+    """
+    return lookup_product_table_rate(
+        product_tables=product_tables,
+        table_name="FreeWD",
+        product_type=rider_table_name,
+        valuation_date=valuation_date,
+    )
+
+
+def benefit_withdrawal_components(
+    contract_value_base: Any,
+    percentage: Any,
+    rmd: Any,
+    *,
+    tax_qualified: Any = None,
+    rmd_qualified: Any = None,
+) -> Dict[str, Any]:
+    """
+    Return rider-based withdrawal-limit components and limit amount.
+
+    Rule:
+      A = max(0, ContractValueBase) * max(0, Percentage)
+      B = max(0, RMD) only when tax-qualified
+      Limit = max(A, B)
+    """
+    base = max(0.0, sfloat(contract_value_base, 0.0))
+    pct = max(0.0, sfloat(percentage, 0.0))
+    a = base * pct
+
+    tax_raw = tax_qualified if nonempty(tax_qualified) else rmd_qualified
+    tax_flag = truthy_flag(tax_raw)
+    b = max(0.0, sfloat(rmd, 0.0)) if tax_flag else 0.0
+
+    return {
+        "contract_value_base": base,
+        "percentage": pct,
+        "a": a,
+        "b": b,
+        "tax_qualified": tax_flag,
+        "limit": max(a, b),
+    }
+
+
+def is_within_guarantee_period(
+    val_date: Any,
+    gp_start: Any,
+    gp_end: Any,
+) -> bool:
+    """
+    Return ``True`` if *val_date* falls within ``[gp_start, gp_end]``.
+    """
+    val_ts = to_ts(val_date)
+    start_ts = to_ts(gp_start)
+    end_ts = to_ts(gp_end)
+    if pd.isna(val_ts) or pd.isna(start_ts) or pd.isna(end_ts):
+        return False
+    return start_ts <= val_ts <= end_ts
+
+
+def is_right_to_examine_period(
+    val_date: Any,
+    issue_date: Any,
+    rte_days: int = RIGHT_TO_EXAMINE_DAYS,
+) -> bool:
+    """
+    Return ``True`` if *val_date* is inside the right-to-examine window.
+
+    The window is defined as ``[issue_date, issue_date + rte_days)``.
+    """
+    val_ts = to_ts(val_date)
+    issue_ts = to_ts(issue_date)
+    if pd.isna(val_ts) or pd.isna(issue_ts):
+        return False
+    window_end = issue_ts + pd.Timedelta(days=rte_days)
+    return issue_ts <= val_ts < window_end
 
 # ---------------------------------------------------------------------------
 # Policy year
